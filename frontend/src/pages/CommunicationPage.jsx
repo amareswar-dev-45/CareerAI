@@ -60,6 +60,8 @@ export default function CommunicationPage() {
   const [isRecordingConvo, setIsRecordingConvo] = useState(false);
   const [convoAudioBlob, setConvoAudioBlob] = useState(null);
   const [sendingConvo, setSendingConvo] = useState(false);
+  const [isAiSpeaking, setIsAiSpeaking] = useState(false);
+  const [micPermissionError, setMicPermissionError] = useState(false);
   const [convoFeedback, setConvoFeedback] = useState(null);
   const [generatingFeedback, setGeneratingFeedback] = useState(false);
 
@@ -70,11 +72,44 @@ export default function CommunicationPage() {
   const [evaluatingMistake, setEvaluatingMistake] = useState(false);
   const [mistakeEvaluation, setMistakeEvaluation] = useState(null);
 
-  // MediaRecorder refs
+  // MediaRecorder & Voice Loop refs
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const speechRecognitionRef = useRef(null);
   const activeAudioPlayerRef = useRef(null);
+  const liveTranscriptRef = useRef('');
+  const silenceTimerRef = useRef(null);
+  const activeTabRef = useRef(activeTab);
+  const isRecordingConvoRef = useRef(false);
+  const sendingConvoRef = useRef(false);
+  const isAiSpeakingRef = useRef(false);
+  const initialGreetingSpokenRef = useRef(false);
+  const activeUtteranceRef = useRef(null);
+  const messagesEndRef = useRef(null);
+
+  // Synchronize state to refs for asynchronous voice loop callbacks
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
+    isRecordingConvoRef.current = isRecordingConvo;
+  }, [isRecordingConvo]);
+
+  useEffect(() => {
+    sendingConvoRef.current = sendingConvo;
+  }, [sendingConvo]);
+
+  useEffect(() => {
+    isAiSpeakingRef.current = isAiSpeaking;
+  }, [isAiSpeaking]);
+
+  // Auto-scroll chat stream when new messages or statuses arrive
+  useEffect(() => {
+    if (activeTab === 'conversation') {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [convoHistory, sendingConvo, isAiSpeaking, isRecordingConvo]);
 
   // Fetch Progress
   const fetchProgress = async () => {
@@ -95,22 +130,61 @@ export default function CommunicationPage() {
     fetchProgress();
   }, []);
 
-  // Web Speech API for live transcription preview
-  const initSpeechRecognition = (onTranscript) => {
+  // Web Speech API with natural pause / silence detection & auto submit
+  const initSpeechRecognition = (onTranscript, autoSendOnSilence = false) => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = 'en-IN';
+      recognition.lang = 'en-US';
+
       recognition.onresult = (event) => {
         let transcript = '';
         for (let i = 0; i < event.results.length; i++) {
           transcript += event.results[i][0].transcript + ' ';
         }
-        if (onTranscript) onTranscript(transcript.trim());
+        const trimmed = transcript.trim();
+        liveTranscriptRef.current = trimmed;
+        if (onTranscript) onTranscript(trimmed);
+
+        // Natural pause detection: 1.6 seconds of silence triggers automatic submission
+        if (autoSendOnSilence && trimmed.length > 2) {
+          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+          silenceTimerRef.current = setTimeout(() => {
+            stopRecording('conversation', true);
+          }, 1600);
+        }
       };
-      recognition.onerror = () => {};
+
+      recognition.onspeechend = () => {
+        if (autoSendOnSilence && liveTranscriptRef.current && liveTranscriptRef.current.trim().length > 2) {
+          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+          silenceTimerRef.current = setTimeout(() => {
+            stopRecording('conversation', true);
+          }, 1100);
+        }
+      };
+
+      recognition.onerror = (e) => {
+        if (e.error === 'not-allowed') {
+          setMicPermissionError(true);
+        }
+      };
+
+      recognition.onend = () => {
+        // Keep listening alive if in conversation mode and user hasn't spoken yet
+        if (isRecordingConvoRef.current && !isAiSpeakingRef.current && activeTabRef.current === 'conversation') {
+          if (liveTranscriptRef.current && liveTranscriptRef.current.trim().length > 2) {
+            stopRecording('conversation', true);
+          } else {
+            try {
+              recognition.start();
+            } catch (e) {}
+          }
+        }
+      };
+
       return recognition;
     }
     return null;
@@ -120,9 +194,11 @@ export default function CommunicationPage() {
   const startRecording = async (type) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setMicPermissionError(false);
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
+      liveTranscriptRef.current = '';
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -141,7 +217,7 @@ export default function CommunicationPage() {
 
         const recognition = initSpeechRecognition((liveText) => {
           setReadingTranscript(liveText);
-        });
+        }, false);
         if (recognition) {
           speechRecognitionRef.current = recognition;
           recognition.start();
@@ -153,10 +229,11 @@ export default function CommunicationPage() {
           stream.getTracks().forEach(track => track.stop());
         };
         setIsRecordingConvo(true);
+        isRecordingConvoRef.current = true;
 
         const recognition = initSpeechRecognition((liveText) => {
           setStudentInputText(liveText);
-        });
+        }, true);
         if (recognition) {
           speechRecognitionRef.current = recognition;
           recognition.start();
@@ -169,7 +246,7 @@ export default function CommunicationPage() {
 
         const recognition = initSpeechRecognition((liveText) => {
           setMistakeSpokenText(liveText);
-        });
+        }, false);
         if (recognition) {
           speechRecognitionRef.current = recognition;
           recognition.start();
@@ -179,12 +256,19 @@ export default function CommunicationPage() {
       mediaRecorder.start();
     } catch (err) {
       console.error('Microphone access error:', err);
-      alert('Microphone access is required. Please check your browser microphone permissions.');
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setMicPermissionError(true);
+      }
+      setIsRecordingConvo(false);
+      isRecordingConvoRef.current = false;
+      setIsRecordingReading(false);
+      setIsRecordingMistake(false);
     }
   };
 
   // Stop Mic Recording
-  const stopRecording = (type) => {
+  const stopRecording = (type, autoSend = false) => {
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
     }
@@ -195,31 +279,151 @@ export default function CommunicationPage() {
     }
 
     if (type === 'reading') setIsRecordingReading(false);
-    if (type === 'conversation') setIsRecordingConvo(false);
+    if (type === 'conversation') {
+      setIsRecordingConvo(false);
+      isRecordingConvoRef.current = false;
+      if (autoSend) {
+        const text = liveTranscriptRef.current || studentInputText;
+        if (text && text.trim().length > 0) {
+          setTimeout(() => {
+            handleSendConversationMessage(text.trim());
+          }, 60);
+        }
+      }
+    }
     if (type === 'mistake') setIsRecordingMistake(false);
   };
 
-  // Audio Playback
-  const playAudio = (audioUrl) => {
-    if (!audioUrl) return;
-    if (activeAudioPlayerRef.current) {
-      activeAudioPlayerRef.current.pause();
+  // Unified AI Speech Engine: Plays synthesized voice or browser TTS, then triggers auto-listening
+  const speakAiReply = (text, audioUrl, onComplete) => {
+    setIsAiSpeaking(true);
+    isAiSpeakingRef.current = true;
+
+    // Stop active mic to avoid picking up speaker output
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
     }
-    const audio = new Audio(audioUrl);
-    activeAudioPlayerRef.current = audio;
-    audio.play().catch(e => console.log('Audio playback error:', e.message));
+    if (speechRecognitionRef.current) {
+      try { speechRecognitionRef.current.stop(); } catch (e) {}
+    }
+    setIsRecordingConvo(false);
+    isRecordingConvoRef.current = false;
+
+    let hasCompleted = false;
+    const handleFinish = () => {
+      if (hasCompleted) return;
+      hasCompleted = true;
+      setIsAiSpeaking(false);
+      isAiSpeakingRef.current = false;
+      if (onComplete) {
+        setTimeout(onComplete, 300);
+      }
+    };
+
+    if (audioUrl) {
+      if (activeAudioPlayerRef.current) {
+        activeAudioPlayerRef.current.pause();
+        activeAudioPlayerRef.current = null;
+      }
+      try {
+        const audio = new Audio(audioUrl);
+        activeAudioPlayerRef.current = audio;
+        audio.onended = handleFinish;
+        audio.onerror = () => {
+          speakWithBrowser(text, handleFinish);
+        };
+        audio.play().catch(e => {
+          console.warn('Audio play notice, falling back to browser speech:', e.message);
+          speakWithBrowser(text, handleFinish);
+        });
+        return;
+      } catch (e) {
+        console.warn('Audio initialization notice:', e.message);
+      }
+    }
+
+    speakWithBrowser(text, handleFinish);
   };
 
-  // Native Browser TTS fallback
-  const speakTextNative = (text) => {
-    if ('speechSynthesis' in window && text) {
+  // Browser Speech Synthesis Engine
+  const speakWithBrowser = (text, onFinished) => {
+    if (!('speechSynthesis' in window) || !text) {
+      if (onFinished) onFinished();
+      return;
+    }
+
+    try {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = 'en-US';
-      utterance.rate = 0.95;
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+
+      const voices = window.speechSynthesis.getVoices();
+      const voice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('David') || v.name.includes('Zira')));
+      if (voice) {
+        utterance.voice = voice;
+      }
+
+      utterance.onend = () => {
+        if (onFinished) onFinished();
+      };
+      utterance.onerror = (e) => {
+        console.warn('SpeechSynthesis error:', e);
+        if (onFinished) onFinished();
+      };
+
+      activeUtteranceRef.current = utterance;
       window.speechSynthesis.speak(utterance);
+    } catch (err) {
+      console.warn('Speech synthesis call notice:', err);
+      if (onFinished) onFinished();
     }
   };
+
+  // Automatically activate microphone after AI finishes speaking
+  const startAutoListening = () => {
+    if (activeTabRef.current !== 'conversation') return;
+    if (isAiSpeakingRef.current || sendingConvoRef.current || isRecordingConvoRef.current) return;
+
+    startRecording('conversation');
+  };
+
+  // Conversation lifecycle: speaks initial greeting and manages cleanup
+  useEffect(() => {
+    if (activeTab !== 'conversation') {
+      if (activeAudioPlayerRef.current) {
+        activeAudioPlayerRef.current.pause();
+        activeAudioPlayerRef.current = null;
+      }
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+      if (speechRecognitionRef.current) {
+        try { speechRecognitionRef.current.stop(); } catch (e) {}
+      }
+      setIsRecordingConvo(false);
+      setIsAiSpeaking(false);
+    } else {
+      // Automatic start: AI speaks opening greeting and then activates mic
+      if (!initialGreetingSpokenRef.current && convoHistory.length === 1 && convoHistory[0].role === 'ai') {
+        const timer = setTimeout(() => {
+          initialGreetingSpokenRef.current = true;
+          speakAiReply(convoHistory[0].content, convoHistory[0].audioUrl, () => {
+            startAutoListening();
+          });
+        }, 500);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [activeTab]);
 
   // Generate Reading Passage
   const handleGeneratePassage = async () => {
@@ -288,19 +492,31 @@ export default function CommunicationPage() {
     setStudentInputText('');
 
     try {
-      const formData = new FormData();
-      formData.append('studentMessage', textToSend);
-      formData.append('level', convoLevel);
-      formData.append('topic', convoTopic);
-      formData.append('history', JSON.stringify(updatedHistory));
+      let res;
+      if (textToSend) {
+        // Fast path: direct JSON request (instant transmission, <20ms)
+        res = await API.post('/communication/conversation/message', {
+          studentMessage: textToSend,
+          level: convoLevel,
+          topic: convoTopic,
+          history: JSON.stringify(updatedHistory)
+        });
+      } else {
+        // Fallback path: audio upload if no text transcript
+        const formData = new FormData();
+        formData.append('studentMessage', textToSend);
+        formData.append('level', convoLevel);
+        formData.append('topic', convoTopic);
+        formData.append('history', JSON.stringify(updatedHistory));
 
-      if (convoAudioBlob) {
-        formData.append('audio', convoAudioBlob, 'convo_audio.webm');
+        if (convoAudioBlob) {
+          formData.append('audio', convoAudioBlob, 'convo_audio.webm');
+        }
+
+        res = await API.post('/communication/conversation/message', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
       }
-
-      const res = await API.post('/communication/conversation/message', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
 
       if (res.data?.success) {
         const aiMsg = {
@@ -311,12 +527,10 @@ export default function CommunicationPage() {
         };
         setConvoHistory([...updatedHistory, aiMsg]);
 
-        // Automatically play AI voice response
-        if (res.data.data.audioUrl) {
-          playAudio(res.data.data.audioUrl);
-        } else {
-          speakTextNative(res.data.data.reply);
-        }
+        // Automatically speak AI voice response and automatically activate mic when AI finishes speaking
+        speakAiReply(res.data.data.reply, res.data.data.audioUrl, () => {
+          startAutoListening();
+        });
       }
     } catch (err) {
       console.error('Error in conversation message:', err);
@@ -324,6 +538,52 @@ export default function CommunicationPage() {
       setSendingConvo(false);
       setConvoAudioBlob(null);
     }
+  };
+
+  // Reset Conversation Session with fresh topic prompt
+  const handleResetConversation = (newTopic = convoTopic) => {
+    if (activeAudioPlayerRef.current) {
+      activeAudioPlayerRef.current.pause();
+      activeAudioPlayerRef.current = null;
+    }
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+    }
+    if (speechRecognitionRef.current) {
+      try { speechRecognitionRef.current.stop(); } catch (e) {}
+    }
+
+    setIsRecordingConvo(false);
+    isRecordingConvoRef.current = false;
+    setIsAiSpeaking(false);
+    isAiSpeakingRef.current = false;
+    setSendingConvo(false);
+    setStudentInputText('');
+    setConvoFeedback(null);
+
+    let openingPrompt = "Hi there! I am your AI communication coach. What did you work on or study today?";
+    if (newTopic === 'Hobbies & Free Time') {
+      openingPrompt = "Hello! What hobbies or activities do you enjoy during your free time?";
+    } else if (newTopic === 'Tech Projects & Coding') {
+      openingPrompt = "Hi there! Tell me about what tech projects or coding topics you're currently exploring.";
+    } else if (newTopic === 'Daily Routine & Habits') {
+      openingPrompt = "Hi! How does your typical day look, and what productive habits are you building?";
+    } else if (newTopic === 'Future Goals & Placements') {
+      openingPrompt = "Greetings! What are your career goals and what kind of roles are you preparing for?";
+    }
+
+    const resetMsg = [{ role: 'ai', content: openingPrompt, audioUrl: null }];
+    setConvoHistory(resetMsg);
+
+    setTimeout(() => {
+      speakAiReply(openingPrompt, null, () => {
+        startAutoListening();
+      });
+    }, 400);
   };
 
   // End Conversation & Generate Feedback
@@ -930,7 +1190,11 @@ export default function CommunicationPage() {
                 </label>
                 <select
                   value={convoTopic}
-                  onChange={(e) => setConvoTopic(e.target.value)}
+                  onChange={(e) => {
+                    const newTopic = e.target.value;
+                    setConvoTopic(newTopic);
+                    handleResetConversation(newTopic);
+                  }}
                   className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   <option value="College Studies & Campus Life">College Studies & Campus Life</option>
@@ -1013,8 +1277,9 @@ export default function CommunicationPage() {
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => {
-                            if (msg.audioUrl) playAudio(msg.audioUrl);
-                            else speakTextNative(msg.content);
+                            speakAiReply(msg.content, msg.audioUrl, () => {
+                              startAutoListening();
+                            });
                           }}
                           className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
                         >
@@ -1045,21 +1310,42 @@ export default function CommunicationPage() {
                   <span>AI coach is listening & preparing response...</span>
                 </div>
               )}
+
+              <div ref={messagesEndRef} />
             </div>
 
             {/* Spoken Input Bar */}
             <div className="p-4 bg-white border-t border-slate-200 space-y-3">
+              {/* AI Speaking state indicator */}
+              {isAiSpeaking && (
+                <div className="p-3 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-between text-xs text-indigo-700 animate-fadeIn">
+                  <div className="flex items-center gap-2">
+                    <Volume2 className="w-4 h-4 text-indigo-600 animate-pulse shrink-0" />
+                    <span className="font-bold">AI Coach is speaking...</span>
+                  </div>
+                  <span className="text-[11px] text-indigo-500 italic">Microphone will activate automatically</span>
+                </div>
+              )}
+
+              {/* Microphone permission alert indicator */}
+              {micPermissionError && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 flex items-center gap-2 text-xs text-amber-800 animate-fadeIn">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>Microphone access needed. Please click allow on your browser's microphone prompt to speak naturally.</span>
+                </div>
+              )}
+
               {/* Spoken transcript live preview */}
               {isRecordingConvo && (
                 <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-between text-xs text-rose-700 animate-fadeIn">
                   <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping shrink-0" />
                     <span className="font-bold">Listening to you speak:</span>
                     <span className="italic">"{studentInputText || 'Say anything naturally...'}"</span>
                   </div>
                   <button
-                    onClick={() => stopRecording('conversation')}
-                    className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold cursor-pointer"
+                    onClick={() => stopRecording('conversation', true)}
+                    className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold cursor-pointer shrink-0"
                   >
                     Done Speaking
                   </button>
@@ -1078,7 +1364,7 @@ export default function CommunicationPage() {
                   </button>
                 ) : (
                   <button
-                    onClick={() => stopRecording('conversation')}
+                    onClick={() => stopRecording('conversation', true)}
                     className="p-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white transition cursor-pointer animate-pulse"
                     title="Stop speaking"
                   >

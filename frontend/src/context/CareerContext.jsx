@@ -153,14 +153,22 @@ export const CareerProvider = ({ children }) => {
     } catch (e) {}
   };
 
+  const fetchInitialUserData = async () => {
+    try {
+      await Promise.allSettled([
+        fetchProfile(),
+        fetchApplications(),
+        fetchResume(),
+        fetchATS(),
+        fetchSkillGap(),
+        fetchRoadmap()
+      ]);
+    } catch (e) {}
+  };
+
   useEffect(() => {
     if (user) {
-      fetchProfile();
-      fetchApplications();
-      fetchResume();
-      fetchATS();
-      fetchSkillGap();
-      fetchRoadmap();
+      fetchInitialUserData();
     } else {
       // Clear or reset sensitive user states
       setApplications([]);
@@ -208,13 +216,8 @@ export const CareerProvider = ({ children }) => {
       fetchRoadmap,
       loading,
       refreshAll: () => {
-        fetchProfile();
+        fetchInitialUserData();
         fetchJobsData({ forceRefresh: true });
-        fetchApplications();
-        fetchResume();
-        fetchATS();
-        fetchSkillGap();
-        fetchRoadmap();
       }
     }}>
       {children}

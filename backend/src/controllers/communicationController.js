@@ -1,5 +1,6 @@
 const communicationService = require('../services/communicationService');
 const CommunicationSession = require('../models/CommunicationSession');
+const env = require('../config/env');
 
 // 1. Generate Reading Practice Passage
 exports.generateReadingPassage = async (req, res) => {
@@ -22,13 +23,15 @@ exports.analyzeReadingSpeech = async (req, res) => {
     let spokenText = providedSpoken || '';
     let audioUrl = null;
 
-    // If an audio file was uploaded with multipart/form-data
-    if (req.file && req.file.buffer) {
+    // If spokenText was not already provided by client speech recognition
+    if ((!spokenText || !spokenText.trim()) && req.file && req.file.buffer) {
       const transcribed = await communicationService.transcribeAudio(req.file.buffer, req.file.mimetype);
       if (transcribed) {
         spokenText = transcribed;
       }
-      // Optionally store in Cloudinary if configured
+    }
+    if (req.file && req.file.buffer && env.CLOUDINARY_CLOUD_NAME) {
+      // Optional async Cloudinary upload
       audioUrl = await communicationService.uploadAudioToCloudinary(req.file.buffer, `reading_${userId}`);
     }
 
@@ -102,8 +105,8 @@ exports.handleConversationMessage = async (req, res) => {
 
     let studentMessage = providedMessage || '';
 
-    // If audio file was uploaded for conversation
-    if (req.file && req.file.buffer) {
+    // If audio file was uploaded and studentMessage was not already transcribed by client
+    if ((!studentMessage || !studentMessage.trim()) && req.file && req.file.buffer) {
       const transcribed = await communicationService.transcribeAudio(req.file.buffer, req.file.mimetype);
       if (transcribed) {
         studentMessage = transcribed;

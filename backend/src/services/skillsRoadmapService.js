@@ -8,7 +8,7 @@ class SkillsRoadmapService {
     this.tavilyApiKey = env.TAVILY_API_KEY;
     this.serpApiKey = env.SERP_API_KEY;
     this.geminiApiKey = env.GEMINI_COMMUNICATION_API || env.GEMINI_API_KEY;
-    this.models = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+    this.models = ['gemini-3.5-flash-lite', 'gemini-3.8-flash'];
   }
 
   // 1. Tavily Search
@@ -65,27 +65,53 @@ class SkillsRoadmapService {
     return [];
   }
 
-  // 3. Multi-source research
+  // 3. Multi-source research with memory cache & parallelization
   async researchJobRequirements(company, role) {
+    if (!this._researchCache) {
+      this._researchCache = new Map();
+    }
+    const cacheKey = `${(company || '').trim().toLowerCase()}:${(role || '').trim().toLowerCase()}`;
+    const cached = this._researchCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+      return cached.data;
+    }
+
     const q1 = `${company} ${role} job description required skills qualifications`;
     const q2 = `${company} ${role} interview technical questions topics candidate experience`;
 
-    let results = await this.searchTavily(q1, 3);
-    if (!results || results.length < 2) {
+    // Query in parallel instead of waiting sequentially
+    const [tavilyQ1Res, tavilyQ2Res] = await Promise.allSettled([
+      this.searchTavily(q1, 3),
+      this.searchTavily(q2, 2)
+    ]);
+
+    let results = [];
+    if (tavilyQ1Res.status === 'fulfilled' && Array.isArray(tavilyQ1Res.value)) {
+      results.push(...tavilyQ1Res.value);
+    }
+    if (tavilyQ2Res.status === 'fulfilled' && Array.isArray(tavilyQ2Res.value)) {
+      results.push(...tavilyQ2Res.value);
+    }
+
+    // Fallback to SerpAPI only if Tavily returned very few results
+    if (results.length < 2 && this.serpApiKey) {
       const serpRes = await this.searchSerpApi(q1, 3);
       results = [...results, ...serpRes];
     }
 
-    const interviewResults = await this.searchTavily(q2, 2);
-    results = [...results, ...interviewResults];
-
     // Deduplicate by URL
     const seen = new Set();
-    return results.filter(r => {
+    const deduped = results.filter(r => {
       if (!r.url || seen.has(r.url)) return false;
       seen.add(r.url);
       return true;
     });
+
+    if (deduped.length > 0) {
+      this._researchCache.set(cacheKey, { timestamp: Date.now(), data: deduped });
+    }
+
+    return deduped;
   }
 
   // 4. Gemini JSON Caller
@@ -105,7 +131,7 @@ class SkillsRoadmapService {
           const url = `https://generativelanguage.googleapis.com/v1beta/${model}:generateContent?key=${this.geminiApiKey}`;
           const res = await axios.post(url, payload, {
             headers: { 'Content-Type': 'application/json' },
-            timeout: 20000
+            timeout: 4000
           });
 
           const raw = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;

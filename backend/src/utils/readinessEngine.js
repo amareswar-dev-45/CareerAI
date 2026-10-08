@@ -21,8 +21,43 @@ function calculateCareerReadiness({
   projectCount = 0,
   hasExperience = false,
   interviewScore = 0,
-  profile = {}
+  profile = {},
+  hasResume = true
 }) {
+  const isNoResume = hasResume === false || (atsScore === 0 && (!resumeSkills || resumeSkills.length === 0));
+
+  if (isNoResume) {
+    let compPoints = 0;
+    if (profile.collegeName) compPoints += 2;
+    if (profile.degree) compPoints += 2;
+    if (profile.targetRole) compPoints += 2;
+    if (profile.dreamCompany) compPoints += 2;
+    const finalProfileCompleteness = Math.max(0, Math.min(10, compPoints));
+    
+    let interviewPoints = 0;
+    if (interviewScore > 0) {
+      const validInterviewScore = Math.min(100, Math.max(0, Number(interviewScore)));
+      interviewPoints = Math.round((validInterviewScore / 100) * 15);
+    }
+    const finalInterviewReadiness = Math.max(0, Math.min(15, interviewPoints));
+
+    const finalScore = finalProfileCompleteness + finalInterviewReadiness;
+
+    return {
+      score: finalScore,
+      readinessScore: finalScore,
+      statusLabel: 'Insufficient profile evidence',
+      hasResumeEvidence: false,
+      breakdown: {
+        resumeSkills: { score: 0, max: 30, label: 'Resume Skills', status: 'Not provided / Not verified' },
+        targetRoleMatch: { score: 0, max: 25, label: 'Target Role Match', status: 'Awaiting verified skills' },
+        experienceProjects: { score: 0, max: 20, label: 'Experience & Projects', status: 'Not provided' },
+        interviewReadiness: { score: finalInterviewReadiness, max: 15, label: 'Interview Readiness', status: interviewScore > 0 ? 'Verified' : 'Not started' },
+        profileCompleteness: { score: finalProfileCompleteness, max: 10, label: 'Profile Completeness', status: 'Verified' }
+      }
+    };
+  }
+
   // 1. Resume Skills (Weight: 30)
   // Evaluated from detected technical skills and ATS quality
   const skillCount = Array.isArray(resumeSkills) ? resumeSkills.length : 0;

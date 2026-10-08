@@ -19,7 +19,8 @@ const UserSchema = new mongoose.Schema({
   dreamCompany: { type: String, default: '' },
   targetRole: { type: String, default: '' },
   graduationYear: { type: String, default: '2026' },
-  onboardingCompleted: { type: Boolean, default: false }
+  onboardingCompleted: { type: Boolean, default: false },
+  resumeStatus: { type: String, enum: ['uploaded', 'created', 'skipped', 'none'], default: 'none' }
 }, { timestamps: true });
 
 // Pre-save hook to hash password if modified

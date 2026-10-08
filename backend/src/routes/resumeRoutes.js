@@ -23,5 +23,8 @@ router.post('/builder/:id/duplicate', resumeBuilderController.duplicateResume);
 router.delete('/builder/:id', resumeBuilderController.deleteResume);
 router.post('/builder/ai-improve', resumeBuilderController.aiImprove);
 router.post('/builder/ats-check', resumeBuilderController.atsCheck);
+router.post('/builder/save-and-analyze', resumeBuilderController.submitResumeAndAnalyze);
+router.post('/builder/:id/save-and-analyze', resumeBuilderController.submitResumeAndAnalyze);
+router.post('/builder/:id/submit', resumeBuilderController.submitResumeAndAnalyze);
 
 module.exports = router;

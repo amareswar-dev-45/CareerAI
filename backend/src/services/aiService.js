@@ -6,7 +6,7 @@ class AIService {
   constructor() {
     this.groqApiKey = env.GROQ_API_KEY;
     this.geminiApiKey = env.GEMINI_API_KEY;
-    this.models = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'];
+    this.models = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'qwen/qwen3.8-27b'];
   }
 
   async callGroq(prompt, systemInstruction = "You are CareerAI, an expert career intelligence engine. Output valid JSON only.") {
@@ -21,13 +21,14 @@ class AIService {
             { role: 'user', content: prompt }
           ],
           temperature: 0.1,
+          max_tokens: 800,
           response_format: { type: "json_object" }
         }, {
           headers: {
             'Authorization': `Bearer ${this.groqApiKey}`,
             'Content-Type': 'application/json'
           },
-          timeout: 15000
+          timeout: 6000
         });
 
         if (response.data && response.data.choices && response.data.choices[0]) {
@@ -212,9 +213,14 @@ Return JSON matching this exact structure:
   }
 
   // Real Skill Gap Engine
-  async calculateSkillGap(resumeSkills = [], targetRole = 'Software Engineer', resumeFileName = 'resume.pdf') {
+  async calculateSkillGap(resumeSkills = [], targetRole = 'Software Engineer', resumeFileName = 'resume.pdf', hasResume = true) {
     // 1. Calculate grounded skill gap based on industry taxonomy
-    const realGap = calculateRealSkillGap(resumeSkills, targetRole, resumeFileName);
+    const realGap = calculateRealSkillGap(resumeSkills, targetRole, resumeFileName, hasResume);
+
+    // If user has no resume, preserve pure role taxonomy with "Not provided / Not verified"
+    if (!hasResume) {
+      return realGap;
+    }
 
     // 2. Call Groq to enhance reasons and action items if reachable
     try {

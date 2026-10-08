@@ -86,8 +86,10 @@ exports.getJobs = async (req, res) => {
   try {
     const { q, role, location, workMode, company } = req.query;
 
-    const resume = await Resume.findOne({ userId: req.user.firebaseUid });
-    const profile = await CandidateProfile.findOne({ userId: req.user.firebaseUid });
+    const [resume, profile] = await Promise.all([
+      Resume.findOne({ userId: req.user.firebaseUid }).lean(),
+      CandidateProfile.findOne({ userId: req.user.firebaseUid }).lean()
+    ]);
 
     const userSkills = resume?.parsedData?.skills || resume?.atsAnalysis?.skillsFound || [];
     const userTargetRole = profile?.targetRole || req.user.targetRole || 'Software Engineer';

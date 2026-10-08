@@ -34,26 +34,14 @@ async function getResumeSkills(resume) {
 exports.analyzeSkillGap = async (req, res) => {
   try {
     const resume = await Resume.findOne({ userId: req.user.firebaseUid });
-    if (!resume) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'RESUME_MISSING', message: 'Please upload your resume first.' }
-      });
-    }
-
     const profile = await CandidateProfile.findOne({ userId: req.user.firebaseUid });
-    const targetRole = (req.body.targetRole || profile?.targetRole || resume.targetRole || req.user.targetRole || '').trim();
-    if (!targetRole) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'ROLE_MISSING', message: 'Please select your target role first.' }
-      });
-    }
+    const targetRole = (req.body.targetRole || profile?.targetRole || resume?.targetRole || req.user.targetRole || 'Software Engineer').trim();
 
-    const skills = await getResumeSkills(resume);
-    const fileName = resume.fileName || 'resume.pdf';
+    const hasResume = Boolean(resume && (resume.extractedText || (resume.parsedData?.skills && resume.parsedData.skills.length > 0)));
+    const skills = hasResume ? await getResumeSkills(resume) : [];
+    const fileName = resume?.fileName || (hasResume ? 'resume.pdf' : 'No Resume');
 
-    const gapData = await aiService.calculateSkillGap(skills, targetRole, fileName);
+    const gapData = await aiService.calculateSkillGap(skills, targetRole, fileName, hasResume);
 
     const saved = await SkillGap.findOneAndUpdate(
       { userId: req.user.firebaseUid },
@@ -80,17 +68,18 @@ exports.analyzeSkillGap = async (req, res) => {
 
     // Calculate scientifically normalized career readiness
     const readiness = calculateCareerReadiness({
-      resumeSkills: userSkills,
+      resumeSkills: skills,
       roleMatchPercentage: gapData.skillMatchPercentage,
-      atsScore: profile?.resumeScore || 75,
-      hasProjects: true,
-      projectCount: 2,
-      interviewScore: profile?.interviewScore || 70,
+      atsScore: hasResume ? (profile?.resumeScore || 75) : 0,
+      hasProjects: hasResume,
+      projectCount: hasResume ? 2 : 0,
+      interviewScore: profile?.interviewScore || 0,
+      hasResume,
       profile: {
-        collegeName: profile?.collegeName,
-        degree: profile?.degree,
+        collegeName: profile?.collegeName || req.user.collegeName,
+        degree: profile?.degree || req.user.degree,
         targetRole: targetRole,
-        dreamCompany: profile?.dreamCompany
+        dreamCompany: profile?.dreamCompany || req.user.dreamCompany
       }
     });
 
@@ -120,29 +109,17 @@ exports.analyzeSkillGap = async (req, res) => {
 exports.getLatestSkillGap = async (req, res) => {
   try {
     const resume = await Resume.findOne({ userId: req.user.firebaseUid });
-    if (!resume) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'RESUME_MISSING', message: 'Please upload your resume first.' }
-      });
-    }
-
     const profile = await CandidateProfile.findOne({ userId: req.user.firebaseUid });
-    const targetRole = (req.query.targetRole || profile?.targetRole || resume.targetRole || req.user.targetRole || '').trim();
-    if (!targetRole) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'ROLE_MISSING', message: 'Please select your target role first.' }
-      });
-    }
+    const targetRole = (req.query.targetRole || profile?.targetRole || resume?.targetRole || req.user.targetRole || 'Software Engineer').trim();
 
     let gap = await SkillGap.findOne({ userId: req.user.firebaseUid });
 
     // If gap doesn't exist or targetRole has changed, recalculate dynamically
     if (!gap || gap.targetRole !== targetRole) {
-      const skills = await getResumeSkills(resume);
-      const fileName = resume.fileName || 'resume.pdf';
-      const gapData = await aiService.calculateSkillGap(skills, targetRole, fileName);
+      const hasResume = Boolean(resume && (resume.extractedText || (resume.parsedData?.skills && resume.parsedData.skills.length > 0)));
+      const skills = hasResume ? await getResumeSkills(resume) : [];
+      const fileName = resume?.fileName || (hasResume ? 'resume.pdf' : 'No Resume');
+      const gapData = await aiService.calculateSkillGap(skills, targetRole, fileName, hasResume);
 
       gap = await SkillGap.findOneAndUpdate(
         { userId: req.user.firebaseUid },

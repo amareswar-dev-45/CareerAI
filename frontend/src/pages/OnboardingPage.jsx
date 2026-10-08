@@ -137,12 +137,12 @@ export default function OnboardingPage() {
     setResumeFile(file);
   };
 
-  // Step 5 -> Submit
+  // Step 5 -> Submit with Uploaded Resume
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!resumeFile) {
-      setError('Please upload your resume file to complete onboarding.');
-      return;
+      // If user clicks submit without file, proceed with skip flow
+      return handleSkipForNow();
     }
 
     const finalDegree = degree === 'Other' ? customDegree.trim() : degree.trim();
@@ -159,6 +159,7 @@ export default function OnboardingPage() {
       formData.append('dreamCompany', dreamCompany.trim());
       formData.append('targetRole', finalRole);
       formData.append('resume', resumeFile);
+      formData.append('resumeStatus', 'uploaded');
 
       const res = await submitOnboarding(formData);
       if (res.success) {
@@ -167,6 +168,78 @@ export default function OnboardingPage() {
         navigate('/dashboard', { replace: true });
       } else {
         setError(res.error || 'Failed to complete onboarding. Please try again.');
+      }
+    } catch (err) {
+      setError(err.message || 'An unexpected error occurred while saving your profile.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Step 5 -> Skip for Now (Enters app without resume)
+  const handleSkipForNow = async () => {
+    const finalDegree = degree === 'Other' ? customDegree.trim() : degree.trim();
+    const finalRole = targetRole === 'Other' ? customTargetRole.trim() : targetRole.trim();
+
+    setError('');
+    setIsSubmitting(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('collegeName', collegeName.trim());
+      formData.append('degree', finalDegree);
+      formData.append('graduationYear', graduationYear);
+      formData.append('dreamCompany', dreamCompany.trim());
+      formData.append('targetRole', finalRole);
+      formData.append('resumeStatus', 'skipped');
+
+      const res = await submitOnboarding(formData);
+      if (res.success) {
+        if (refreshAll) refreshAll();
+        navigate('/dashboard', { replace: true });
+      } else {
+        setError(res.error || 'Failed to complete onboarding. Please try again.');
+      }
+    } catch (err) {
+      setError(err.message || 'An unexpected error occurred while saving your profile.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Step 5 -> Create Resume (Redirects directly to Resume Builder with onboarding prefilled)
+  const handleCreateResume = async () => {
+    const finalDegree = degree === 'Other' ? customDegree.trim() : degree.trim();
+    const finalRole = targetRole === 'Other' ? customTargetRole.trim() : targetRole.trim();
+
+    setError('');
+    setIsSubmitting(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('collegeName', collegeName.trim());
+      formData.append('degree', finalDegree);
+      formData.append('graduationYear', graduationYear);
+      formData.append('dreamCompany', dreamCompany.trim());
+      formData.append('targetRole', finalRole);
+      formData.append('resumeStatus', 'created');
+
+      const res = await submitOnboarding(formData);
+      if (res.success) {
+        if (refreshAll) refreshAll();
+        navigate('/resume-builder', { 
+          replace: true,
+          state: {
+            fromOnboarding: true,
+            collegeName: collegeName.trim(),
+            degree: finalDegree,
+            graduationYear,
+            dreamCompany: dreamCompany.trim(),
+            targetRole: finalRole
+          }
+        });
+      } else {
+        setError(res.error || 'Failed to initialize profile. Please try again.');
       }
     } catch (err) {
       setError(err.message || 'An unexpected error occurred while saving your profile.');
@@ -530,31 +603,32 @@ export default function OnboardingPage() {
           </div>
         )}
 
-        {/* STEP 5: RESUME UPLOAD */}
+        {/* STEP 5: RESUME STEP (Upload, Create, or Skip) */}
         {step === 5 && (
           <div className="space-y-6 animate-fadeIn">
             <div className="space-y-2">
               <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">
-                Upload your resume
+                Resume Setup
               </h2>
               <p className="text-xs text-slate-500">
-                Upload your latest resume to automatically evaluate your ATS score, skills gap, and job matches against <span className="font-bold text-indigo-600">{targetRole}</span>.
+                Upload your resume, build a new one tailored for <span className="font-bold text-indigo-600">{targetRole}</span>, or skip for now to start exploring CareerAI.
               </p>
             </div>
 
-            <form noValidate onSubmit={handleSubmit} className="space-y-6">
+            <form noValidate onSubmit={handleSubmit} className="space-y-5">
+              {/* Option 1: Upload Existing Resume (Original dropzone preserved) */}
               {!resumeFile ? (
                 <label 
                   htmlFor="resume-file-input"
-                  className="border-2 border-dashed border-slate-200 hover:border-indigo-500 rounded-3xl p-8 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-indigo-50/30 transition-all group"
+                  className="border-2 border-dashed border-slate-200 hover:border-indigo-500 rounded-3xl p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:bg-indigo-50/30 transition-all group"
                 >
-                  <div className="w-14 h-14 rounded-2xl bg-indigo-50 text-indigo-600 group-hover:scale-110 flex items-center justify-center transition shadow-sm mb-4">
-                    <UploadCloud className="w-7 h-7" />
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 group-hover:scale-110 flex items-center justify-center transition shadow-sm mb-3">
+                    <UploadCloud className="w-6 h-6" />
                   </div>
-                  <span className="text-sm font-bold text-slate-800 block">
-                    Click to select resume file
+                  <span className="text-xs font-bold text-slate-800 block">
+                    Upload Existing Resume
                   </span>
-                  <span className="text-xs text-slate-400 mt-1 block">
+                  <span className="text-[11px] text-slate-400 mt-1 block">
                     Supported formats: PDF, DOC, DOCX (Max 10MB)
                   </span>
                   <input
@@ -590,35 +664,103 @@ export default function OnboardingPage() {
                 </div>
               )}
 
-              <div className="flex items-center gap-3 pt-2">
+              {/* Clean separator */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-slate-200"></div>
+                <span className="text-[10px] font-bold text-slate-400 tracking-wider uppercase">OR</span>
+                <div className="flex-1 h-px bg-slate-200"></div>
+              </div>
+
+              {/* Option 2: Create Resume (Direct to Resume Builder) */}
+              <div 
+                onClick={!isSubmitting ? handleCreateResume : undefined}
+                className="border border-slate-200 hover:border-indigo-300 bg-slate-50/60 hover:bg-indigo-50/40 rounded-2xl p-4 flex items-center justify-between transition cursor-pointer group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center group-hover:scale-105 transition">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 group-hover:text-indigo-700 transition">
+                      Create Resume with Resume Builder
+                    </h4>
+                    <p className="text-[11px] text-slate-500">
+                      Pre-fills your college & target role. No file upload required.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  id="onboarding-create-resume-button"
+                  className="px-3.5 py-1.5 bg-white border border-slate-200 group-hover:border-indigo-300 group-hover:text-indigo-600 text-slate-700 rounded-xl text-xs font-bold shadow-xs transition flex items-center gap-1 shrink-0"
+                >
+                  <span>Create Resume</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-2 pt-2">
                 <button
                   type="button"
                   disabled={isSubmitting}
                   onClick={() => { setError(''); setStep(4); }}
-                  className="px-5 py-3 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-2xl font-semibold text-xs transition flex items-center gap-1.5 disabled:opacity-50"
+                  className="px-4 py-3 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-2xl font-semibold text-xs transition flex items-center gap-1 disabled:opacity-50"
                 >
                   <ArrowLeft className="w-4 h-4" />
                   <span>Back</span>
                 </button>
 
+                {/* Option 3: Skip for Now */}
                 <button
-                  type="submit"
-                  id="onboarding-submit-button"
+                  type="button"
+                  id="onboarding-skip-resume-button"
                   disabled={isSubmitting}
-                  className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold text-xs shadow-lg shadow-indigo-600/30 transition flex items-center justify-center gap-2 disabled:opacity-60"
+                  onClick={handleSkipForNow}
+                  className="px-4 py-3 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-2xl font-bold text-xs transition disabled:opacity-50"
                 >
-                  {isSubmitting ? (
-                    <span className="flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 animate-spin" />
-                      <span>Analyzing resume with Groq AI...</span>
-                    </span>
-                  ) : (
-                    <>
-                      <span>Submit</span>
-                      <CheckCircle2 className="w-4 h-4" />
-                    </>
-                  )}
+                  Skip for Now
                 </button>
+
+                {resumeFile ? (
+                  <button
+                    type="submit"
+                    id="onboarding-submit-button"
+                    disabled={isSubmitting}
+                    className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold text-xs shadow-lg shadow-indigo-600/30 transition flex items-center justify-center gap-2 disabled:opacity-60"
+                  >
+                    {isSubmitting ? (
+                      <span className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 animate-spin" />
+                        <span>Analyzing resume with Groq AI...</span>
+                      </span>
+                    ) : (
+                      <>
+                        <span>Upload & Continue</span>
+                        <CheckCircle2 className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleSkipForNow}
+                    disabled={isSubmitting}
+                    className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold text-xs shadow-lg shadow-indigo-600/30 transition flex items-center justify-center gap-2 disabled:opacity-60"
+                  >
+                    {isSubmitting ? (
+                      <span className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 animate-spin" />
+                        <span>Continuing...</span>
+                      </span>
+                    ) : (
+                      <>
+                        <span>Continue to Dashboard</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
             </form>
           </div>

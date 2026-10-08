@@ -16,7 +16,7 @@ class CommunicationService {
     this.geminiKey = env.GEMINI_COMMUNICATION_API || env.GEMINI_API_KEY;
     this.deepgramKey = env.SPEECH_TO_TEXT_API_KEY || env.VOICE_AGENT_API_KEY;
     this.ttsKey = env.TEXT_TO_SPEECH_API_KEY || env.SPEECH_TO_TEXT_API_KEY;
-    this.models = ['models/gemini-3.5-flash-lite', 'models/gemini-flash-lite-latest', 'models/gemini-3.1-flash-lite', 'models/gemini-3.8-flash'];
+    this.models = ['models/gemini-3.5-flash-lite', 'models/gemini-3.8-flash'];
   }
 
   // Core Gemini API caller for communication
@@ -40,7 +40,7 @@ class CommunicationService {
         const url = `https://generativelanguage.googleapis.com/v1beta/${model}:generateContent?key=${this.geminiKey}`;
         const response = await axios.post(url, payload, {
           headers: { 'Content-Type': 'application/json' },
-          timeout: 20000
+          timeout: 3000
         });
 
         const rawText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -53,26 +53,29 @@ class CommunicationService {
       }
     }
 
-    // Secondary fallback to Groq if Gemini key encounters rate limits
+    // Secondary fallback to ultra-fast Groq if Gemini key encounters rate limits
     if (env.GROQ_API_KEY) {
-      try {
-        const groqRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-          model: 'openai/gpt-oss-120b',
-          messages: [
-            { role: 'system', content: systemInstruction },
-            { role: 'user', content: prompt }
-          ],
-          temperature: 0.2,
-          response_format: { type: "json_object" }
-        }, {
-          headers: { 'Authorization': `Bearer ${env.GROQ_API_KEY}` },
-          timeout: 15000
-        });
+      const groqModels = ['qwen/qwen3.8-27b', 'openai/gpt-oss-120b'];
+      for (const gm of groqModels) {
+        try {
+          const groqRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+            model: gm,
+            messages: [
+              { role: 'system', content: systemInstruction },
+              { role: 'user', content: prompt }
+            ],
+            temperature: 0.2,
+            response_format: { type: "json_object" }
+          }, {
+            headers: { 'Authorization': `Bearer ${env.GROQ_API_KEY}` },
+            timeout: 5000
+          });
 
-        const text = groqRes.data?.choices?.[0]?.message?.content;
-        if (text) return JSON.parse(text);
-      } catch (gErr) {
-        console.log('[Communication] Groq fallback notice:', gErr.message);
+          const text = groqRes.data?.choices?.[0]?.message?.content;
+          if (text) return JSON.parse(text);
+        } catch (gErr) {
+          console.log(`[Communication] Groq ${gm} notice:`, gErr.message);
+        }
       }
     }
 
@@ -437,7 +440,7 @@ Return JSON:
             'Authorization': `Token ${this.deepgramKey}`,
             'Content-Type': mimetype || 'audio/webm'
           },
-          timeout: 25000
+          timeout: 8000
         }
       );
 
@@ -467,7 +470,7 @@ Return JSON:
             'Content-Type': 'application/json'
           },
           responseType: 'arraybuffer',
-          timeout: 20000
+          timeout: 3500
         }
       );
 

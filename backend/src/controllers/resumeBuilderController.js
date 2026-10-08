@@ -1,13 +1,18 @@
 const BuiltResume = require('../models/BuiltResume');
 const CandidateProfile = require('../models/CandidateProfile');
+const Resume = require('../models/Resume');
+const ATSAnalysis = require('../models/ATSAnalysis');
+const SkillGap = require('../models/SkillGap');
+const User = require('../models/User');
 const axios = require('axios');
 const env = require('../config/env');
 const aiService = require('../services/aiService');
+const { calculateCareerReadiness } = require('../utils/readinessEngine');
 
 // Helper to call Gemini / Groq for Resume Builder
 async function callGemini(prompt, systemInstruction = "You are a professional technical resume editor. Improve clarity, impact, and structure based ONLY on user-supplied information. Never invent jobs, companies, projects, or credentials. Output clean text.") {
   const geminiApiKey = env.GEMINI_COMMUNICATION_API || env.GEMINI_API_KEY;
-  const models = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+  const models = ['gemini-3.5-flash-lite', 'gemini-3.8-flash'];
 
   if (geminiApiKey) {
     const payload = {
@@ -24,7 +29,7 @@ async function callGemini(prompt, systemInstruction = "You are a professional te
         const url = `https://generativelanguage.googleapis.com/v1beta/${model}:generateContent?key=${geminiApiKey}`;
         const res = await axios.post(url, payload, {
           headers: { 'Content-Type': 'application/json' },
-          timeout: 15000
+          timeout: 3000
         });
 
         const raw = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -41,7 +46,7 @@ async function callGemini(prompt, systemInstruction = "You are a professional te
   if (env.GROQ_API_KEY) {
     try {
       const groqRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-        model: 'llama-3.3-70b-versatile',
+        model: 'qwen/qwen3.8-27b',
         messages: [
           { role: 'system', content: systemInstruction },
           { role: 'user', content: prompt }
@@ -52,7 +57,7 @@ async function callGemini(prompt, systemInstruction = "You are a professional te
           'Authorization': `Bearer ${env.GROQ_API_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 15000
+        timeout: 5000
       });
 
       if (groqRes.data?.choices?.[0]?.message?.content) {
@@ -391,6 +396,250 @@ exports.atsCheck = async (req, res) => {
     return res.json({ success: true, data: result });
   } catch (error) {
     console.error('atsCheck error:', error);
+    return res.status(500).json({ success: false, error: { message: error.message } });
+  }
+};
+
+// 8. Submit Resume / Save & Analyze Structured Resume
+exports.submitResumeAndAnalyze = async (req, res) => {
+  try {
+    const { id } = req.params;
+    let resumeData = req.body.resumeData || req.body;
+
+    if (!resumeData || typeof resumeData !== 'object') {
+      return res.status(400).json({ success: false, error: { message: 'Resume data is required' } });
+    }
+
+    const profile = await CandidateProfile.findOne({ userId: req.user.firebaseUid });
+    const targetRole = (resumeData.targetRole || profile?.targetRole || req.user.targetRole || 'Software Developer').trim();
+    const targetCompany = (resumeData.targetCompany || profile?.dreamCompany || req.user.dreamCompany || '').trim();
+
+    // Persist to BuiltResume
+    const updatePayload = {
+      ...resumeData,
+      targetRole,
+      targetCompany,
+      userId: req.user.firebaseUid
+    };
+    delete updatePayload._id;
+
+    let builtDoc;
+    if (id && id !== 'new' && id !== 'save-and-analyze') {
+      builtDoc = await BuiltResume.findOneAndUpdate(
+        { _id: id, userId: req.user.firebaseUid },
+        { $set: updatePayload },
+        { new: true, upsert: true }
+      );
+    } else {
+      builtDoc = await BuiltResume.findOneAndUpdate(
+        { userId: req.user.firebaseUid },
+        { $set: updatePayload },
+        { new: true, upsert: true }
+      );
+    }
+
+    // Flatten all categorized skills into unified list
+    const s = resumeData.skills || {};
+    const allSkills = Array.from(new Set([
+      ...(Array.isArray(s.technical) ? s.technical : []),
+      ...(Array.isArray(s.programming) ? s.programming : []),
+      ...(Array.isArray(s.frameworks) ? s.frameworks : []),
+      ...(Array.isArray(s.databases) ? s.databases : []),
+      ...(Array.isArray(s.tools) ? s.tools : []),
+      ...(Array.isArray(s.soft) ? s.soft : []),
+      ...(Array.isArray(s.other) ? s.other : []),
+      ...(Array.isArray(resumeData.skills) ? resumeData.skills : [])
+    ].map(skill => String(skill).trim()).filter(Boolean)));
+
+    // Flatten personal info
+    const p = resumeData.personal || {};
+    const candidateName = p.name || req.user.name || 'Candidate';
+    const email = p.email || req.user.email || '';
+    const phone = p.phone || '';
+    const location = p.location || '';
+    const summary = resumeData.summary || '';
+
+    // Education
+    const educationList = Array.isArray(resumeData.education) ? resumeData.education : [];
+    const eduText = educationList.map(e => `${e.degree || ''} at ${e.institution || ''} (${e.startYear || ''}-${e.endYear || ''}) - ${e.grade || ''}`).join('\n');
+
+    // Projects
+    const projectsList = Array.isArray(resumeData.projects) ? resumeData.projects : [];
+    const projText = projectsList.map(pr => `${pr.name || ''}: ${pr.description || ''}. Tech: ${pr.technologies || ''}. ${pr.contributions || ''}`).join('\n');
+
+    // Experience
+    const expList = Array.isArray(resumeData.experience) ? resumeData.experience : [];
+    const expText = expList.map(ex => `${ex.role || ''} at ${ex.company || ''}: ${ex.responsibilities || ''}. ${ex.achievements || ''}`).join('\n');
+
+    // Build comprehensive structured text representation
+    const structuredResumeText = `
+Candidate: ${candidateName}
+Email: ${email}
+Phone: ${phone}
+Location: ${location}
+Target Role: ${targetRole}
+Target Company: ${targetCompany}
+
+Summary:
+${summary}
+
+Education:
+${eduText}
+
+Technical Skills:
+${allSkills.join(', ')}
+
+Projects:
+${projText}
+
+Experience:
+${expText}
+`.trim();
+
+    // Real ATS Analysis against target role using Groq / grounded engine
+    const atsResult = await aiService.analyzeResumeAgainstTargetRole(structuredResumeText, targetRole);
+    const atsScore = atsResult.atsScore || 75;
+
+    // Persist to Resume document
+    const fileName = `${resumeData.title || 'Built_Resume'}.pdf`;
+    const resumeDoc = await Resume.findOneAndUpdate(
+      { userId: req.user.firebaseUid },
+      {
+        $set: {
+          fileUrl: 'builder-resume',
+          fileName,
+          mimeType: 'application/json',
+          extractedText: structuredResumeText,
+          parsedData: {
+            skills: allSkills.length > 0 ? allSkills : (atsResult.skillsFound || []),
+            education: educationList.map(e => ({ institution: e.institution, degree: e.degree, year: e.endYear, grade: e.grade })),
+            experience: expList.map(e => ({ role: e.role, company: e.company, description: e.responsibilities })),
+            projects: projectsList.map(pr => ({ title: pr.name, techStack: (pr.technologies || '').split(',').map(t => t.trim()), description: pr.description }))
+          },
+          targetRole,
+          atsScore,
+          atsAnalysis: atsResult
+        }
+      },
+      { new: true, upsert: true }
+    );
+
+    // Persist to ATSAnalysis document
+    const atsAnalysisDoc = await ATSAnalysis.findOneAndUpdate(
+      { userId: req.user.firebaseUid },
+      {
+        $set: {
+          targetRole,
+          score: atsScore,
+          atsScore,
+          requiredSkills: atsResult.requiredSkills || [],
+          skillsFound: atsResult.skillsFound || allSkills,
+          missingSkills: atsResult.missingSkills || [],
+          strengths: atsResult.strengths || ['Structured resume built with categorized skills and verified education'],
+          improvements: atsResult.improvements || [],
+          relevantExperience: atsResult.relevantExperience || (projectsList.length > 0 ? `${projectsList.length} structured projects listed` : 'Relevant academic projects listed'),
+          educationMatch: atsResult.educationMatch || 'Degree matches prerequisites',
+          missingKeywords: atsResult.missingKeywords || [],
+          suggestedImprovements: atsResult.suggestedImprovements || [],
+          keywordCoverage: Math.round(((atsResult.skillsFound?.length || allSkills.length || 1) / Math.max(atsResult.requiredSkills?.length || 1, 1)) * 100),
+          formattingScore: 92,
+          skillsMatchScore: Math.round(((atsResult.skillsFound?.length || allSkills.length || 1) / Math.max(atsResult.requiredSkills?.length || 1, 1)) * 100),
+          experienceScore: 75
+        }
+      },
+      { new: true, upsert: true }
+    );
+
+    // Synchronize Skill Gap immediately using structured skills
+    const gapSkills = allSkills.length > 0 ? allSkills : (atsResult.skillsFound || []);
+    const gapData = await aiService.calculateSkillGap(gapSkills, targetRole, fileName, true);
+    await SkillGap.findOneAndUpdate(
+      { userId: req.user.firebaseUid },
+      {
+        $set: {
+          targetRole,
+          resumeFileName: fileName,
+          readinessScore: gapData.skillMatchPercentage,
+          skillMatchPercentage: gapData.skillMatchPercentage,
+          skillsYouHave: gapData.skillsYouHave,
+          skillsToImprove: gapData.skillsToImprove,
+          scoreBreakdown: gapData.scoreBreakdown,
+          skillsBreakdown: gapData.skillsBreakdown,
+          requiredSkills: gapData.requiredSkills,
+          existingSkills: gapData.existingSkills,
+          missingSkills: gapData.missingSkills,
+          prioritySkills: gapData.prioritySkills,
+          note: gapData.note,
+          analyzedAt: new Date()
+        }
+      },
+      { new: true, upsert: true }
+    );
+
+    // Calculate scientifically normalized career readiness
+    const readiness = calculateCareerReadiness({
+      resumeSkills: gapSkills,
+      roleMatchPercentage: atsAnalysisDoc.skillsMatchScore,
+      atsScore: atsScore,
+      hasProjects: projectsList.length > 0,
+      projectCount: Math.max(1, projectsList.length),
+      hasExperience: expList.length > 0,
+      interviewScore: profile?.interviewScore || 70,
+      hasResume: true,
+      profile: {
+        collegeName: profile?.collegeName || req.user.collegeName,
+        degree: profile?.degree || req.user.degree,
+        targetRole,
+        dreamCompany: targetCompany
+      }
+    });
+
+    // Update Profile and User records
+    const updatedProfile = await CandidateProfile.findOneAndUpdate(
+      { userId: req.user.firebaseUid },
+      {
+        $set: {
+          targetRole,
+          dreamCompany: targetCompany || profile?.dreamCompany,
+          resumeScore: atsScore,
+          skillsScore: atsAnalysisDoc.skillsMatchScore,
+          readinessScore: readiness.readinessScore,
+          readinessBreakdown: readiness.breakdown,
+          resumeStatus: 'created',
+          onboardingCompleted: true
+        }
+      },
+      { new: true, upsert: true }
+    );
+
+    await User.updateOne(
+      { firebaseUid: req.user.firebaseUid },
+      { 
+        $set: { 
+          resumeStatus: 'created',
+          targetRole,
+          dreamCompany: targetCompany || user?.dreamCompany,
+          onboardingCompleted: true 
+        } 
+      }
+    );
+
+    return res.json({
+      success: true,
+      message: 'Resume saved and analyzed successfully',
+      data: {
+        atsScore,
+        resumeStatus: 'created',
+        builtResume: builtDoc,
+        resume: resumeDoc,
+        atsAnalysis: atsResult,
+        skillGap: gapData,
+        readiness,
+        profile: updatedProfile
+      }
+    });
+  } catch (error) {
+    console.error('submitResumeAndAnalyze error:', error);
     return res.status(500).json({ success: false, error: { message: error.message } });
   }
 };

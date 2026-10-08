@@ -113,35 +113,6 @@ export default function SkillGapPage() {
     }
   };
 
-  // Missing resume error state
-  if (isResumeMissing) {
-    return (
-      <div className="p-4 md:p-8 max-w-3xl mx-auto space-y-6">
-        <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm text-center space-y-4">
-          <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto border border-amber-200">
-            <FileText className="w-7 h-7" />
-          </div>
-          <div className="space-y-1">
-            <h3 className="text-xl font-bold text-slate-800">Please upload your resume first</h3>
-            <p className="text-xs text-slate-500 max-w-md mx-auto">
-              Skill Gap Analysis requires your verified resume text to extract skills and compare against your target role.
-            </p>
-          </div>
-          <button
-            onClick={() => {
-              if (setActiveTab) setActiveTab('resume');
-              navigate('/resume');
-            }}
-            className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/20 transition inline-flex items-center gap-2 cursor-pointer"
-          >
-            <span>Upload Resume Now</span>
-            <ArrowRight className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   // Loading state
   if (loading && !skillGap) {
     return (
@@ -158,6 +129,7 @@ export default function SkillGapPage() {
   const gap = skillGap || {};
   const currentRole = gap.targetRole || profile?.targetRole || user?.targetRole || 'Software Engineer';
   const resumeFile = gap.resumeFileName || 'resume.pdf';
+  const isNoResume = profile?.resumeStatus === 'skipped' || resumeFile === 'No Resume' || !resumeFile;
   const matchPercentage = typeof gap.skillMatchPercentage === 'number' ? gap.skillMatchPercentage : (gap.readinessScore || 0);
 
   const skillsYouHave = Array.isArray(gap.skillsYouHave) && gap.skillsYouHave.length > 0
@@ -168,9 +140,11 @@ export default function SkillGapPage() {
     ? gap.skillsToImprove
     : (gap.missingSkills || []).map(s => ({
         skill: s,
-        status: 'Missing',
+        status: isNoResume ? 'Not provided / Not verified' : 'Missing',
         importance: 'High',
-        reason: `Essential skill for ${currentRole}.`,
+        reason: isNoResume 
+          ? `Expected for ${currentRole}. Not provided / Missing from current profile.`
+          : `Essential skill for ${currentRole}.`,
         action: `Practice key concepts and build a hands-on project.`
       }));
 
@@ -183,17 +157,27 @@ export default function SkillGapPage() {
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">Real Skill Gap Analysis</h2>
           <p className="text-xs text-slate-500 mt-1">
-            Objective skill benchmark based on your uploaded resume and target role.
+            {isNoResume 
+              ? `Role-based industry benchmark for ${currentRole}.` 
+              : 'Objective skill benchmark based on your uploaded resume and target role.'}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
           {/* Resume Analyzed Badge */}
-          <div className="flex items-center gap-2 px-3.5 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-medium">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            <span>Resume: <strong>{resumeFile}</strong></span>
-            <span className="text-[11px] text-emerald-600">✓ Successfully analyzed</span>
-          </div>
+          {isNoResume ? (
+            <div className="flex items-center gap-2 px-3.5 py-1.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs font-medium">
+              <AlertCircle className="w-4 h-4 text-amber-600" />
+              <span>Resume: <strong>Not provided</strong></span>
+              <span className="text-[11px] text-amber-600">(Role baseline comparison)</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 px-3.5 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-medium">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <span>Resume: <strong>{resumeFile}</strong></span>
+              <span className="text-[11px] text-emerald-600">✓ Successfully analyzed</span>
+            </div>
+          )}
 
           <button
             onClick={fetchRealSkillGap}
@@ -205,6 +189,41 @@ export default function SkillGapPage() {
           </button>
         </div>
       </div>
+
+      {/* No-resume banner with quick actions */}
+      {isNoResume && (
+        <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-900">
+          <div className="flex items-start gap-2.5">
+            <Info className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-semibold text-amber-900">No resume provided for skill verification</p>
+              <p className="text-amber-700 text-[11px]">
+                Skills below are marked as "Not provided / Not verified" against the expected skills for <strong>{currentRole}</strong>. You can create a resume or upload one anytime to verify your skills.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => {
+                if (setActiveTab) setActiveTab('builder');
+                navigate('/resume-builder');
+              }}
+              className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
+            >
+              Create Resume
+            </button>
+            <button
+              onClick={() => {
+                if (setActiveTab) setActiveTab('resume');
+                navigate('/resume');
+              }}
+              className="px-3.5 py-1.5 bg-white border border-amber-300 hover:bg-amber-100 text-amber-900 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
+            >
+              Upload Resume
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Error Alert */}
       {error && (
@@ -223,7 +242,9 @@ export default function SkillGapPage() {
       <div className="p-3.5 bg-indigo-50/60 border border-indigo-100 rounded-2xl flex items-start gap-2.5 text-xs text-indigo-900">
         <Info className="w-4 h-4 text-indigo-600 mt-0.5 shrink-0" />
         <p className="leading-relaxed">
-          {gap.note || 'Skill gaps are generated by comparing your uploaded resume with the requirements for your selected target role. Review the results and update your profile if any skill is missing from your resume.'}
+          {gap.note || (isNoResume
+            ? `Skill gaps are based on the target role ${currentRole}. Skills not present in your profile are labeled 'Not provided / Not verified'.`
+            : 'Skill gaps are generated by comparing your uploaded resume with the requirements for your selected target role. Review the results and update your profile if any skill is missing from your resume.')}
         </p>
       </div>
 
@@ -331,7 +352,11 @@ export default function SkillGapPage() {
           </div>
           <div>
             <h3 className="text-sm font-bold text-slate-900">Skills You Already Have ({skillsYouHave.length})</h3>
-            <p className="text-[11px] text-slate-500">Skills detected from your uploaded verified resume.</p>
+            <p className="text-[11px] text-slate-500">
+              {isNoResume 
+                ? 'Skills verified from your candidate profile.' 
+                : 'Skills detected from your uploaded verified resume.'}
+            </p>
           </div>
         </div>
 
@@ -347,7 +372,11 @@ export default function SkillGapPage() {
               </span>
             ))
           ) : (
-            <p className="text-xs text-slate-400 italic">No verified skills detected yet. Upload an updated resume.</p>
+            <p className="text-xs text-slate-400 italic">
+              {isNoResume 
+                ? 'No verified skills recorded yet. Build or upload a resume to verify skills.' 
+                : 'No verified skills detected yet. Upload an updated resume.'}
+            </p>
           )}
         </div>
       </div>
@@ -360,8 +389,14 @@ export default function SkillGapPage() {
               <AlertTriangle className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-slate-900">Skills You Need to Improve ({skillsToImprove.length})</h3>
-              <p className="text-[11px] text-slate-500">Actual gaps between your resume and {currentRole} requirements.</p>
+              <h3 className="text-sm font-bold text-slate-900">
+                {isNoResume ? `Target Role Expected Skills (${skillsToImprove.length})` : `Skills You Need to Improve (${skillsToImprove.length})`}
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                {isNoResume 
+                  ? `Expected industry competencies for ${currentRole}.` 
+                  : `Actual gaps between your resume and ${currentRole} requirements.`}
+              </p>
             </div>
           </div>
         </div>
@@ -374,15 +409,21 @@ export default function SkillGapPage() {
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <span className="w-6 h-6 rounded-lg bg-rose-100 text-rose-700 font-bold text-xs flex items-center justify-center">
+                  <span className={`w-6 h-6 rounded-lg font-bold text-xs flex items-center justify-center ${
+                    isNoResume ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-700'
+                  }`}>
                     {idx + 1}
                   </span>
                   <h4 className="font-bold text-slate-900 text-xs">{item.skill}</h4>
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200">
-                    Status: {item.status || 'Missing'}
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                    item.status === 'Not provided / Not verified'
+                      ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                      : 'bg-rose-50 text-rose-700 border border-rose-200'
+                  }`}>
+                    {item.status || 'Missing'}
                   </span>
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
                     item.importance === 'High' 

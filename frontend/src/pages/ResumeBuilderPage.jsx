@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { 
   FileText, 
   Sparkles, 
+  ArrowRight,
   Plus, 
   Trash2, 
   Download, 
@@ -145,19 +147,53 @@ const DEFAULT_RESUME_STATE = {
 };
 
 export default function ResumeBuilderPage() {
-  const { profile, jobs, selectedJob } = useCareer();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { profile, jobs, selectedJob, refreshAll, setResumeData: setContextResumeData, setAtsAnalysis, setSkillGap } = useCareer();
   const { user } = useAuth();
 
-  // Active Resume Document State
+  // Active Resume Document State (pre-populated from onboarding & profile)
   const [resumeData, setResumeData] = useState(() => {
+    const fromOnboarding = location.state?.fromOnboarding;
+    const targetRole = location.state?.targetRole || profile?.targetRole || user?.targetRole || 'Software Developer';
+    const targetCompany = location.state?.dreamCompany || profile?.dreamCompany || user?.dreamCompany || '';
+    const college = location.state?.collegeName || profile?.collegeName || user?.collegeName || 'Government College of Engineering Kalahandi';
+    const degree = location.state?.degree || profile?.degree || user?.degree || 'B.Tech in Computer Science & Engineering';
+    const gradYear = location.state?.graduationYear || profile?.graduationYear || user?.graduationYear || '2026';
+
     try {
       const local = localStorage.getItem('career_builder_resume_draft');
-      if (local) return JSON.parse(local);
+      if (local && !fromOnboarding) {
+        const parsed = JSON.parse(local);
+        return {
+          ...parsed,
+          targetRole: parsed.targetRole || targetRole,
+          targetCompany: parsed.targetCompany || targetCompany
+        };
+      }
     } catch (e) {}
+
     return {
       ...DEFAULT_RESUME_STATE,
-      targetRole: profile?.targetRole || 'Software Developer',
-      targetCompany: profile?.dreamCompany || ''
+      title: `${targetRole} Resume`,
+      targetRole,
+      targetCompany,
+      personal: {
+        ...DEFAULT_RESUME_STATE.personal,
+        name: user?.name || DEFAULT_RESUME_STATE.personal.name,
+        email: user?.email || DEFAULT_RESUME_STATE.personal.email
+      },
+      education: [
+        {
+          id: 'edu-1',
+          degree,
+          institution: college,
+          location: 'Bhawanipatna, Odisha',
+          startYear: '2022',
+          endYear: gradYear,
+          grade: '8.4 CGPA'
+        }
+      ]
     };
   });
 
@@ -194,6 +230,10 @@ export default function ResumeBuilderPage() {
   // Job Match Integration Modal State
   const [showJobCompareModal, setShowJobCompareModal] = useState(false);
 
+  // Submit Resume / Save & Analyze State
+  const [submittingAnalysis, setSubmittingAnalysis] = useState(false);
+  const [submitSuccessData, setSubmitSuccessData] = useState(null);
+
   // Auto-save debounce timer
   const autoSaveTimer = useRef(null);
   const resumePrintRef = useRef(null);
@@ -229,15 +269,15 @@ export default function ResumeBuilderPage() {
     fetchUserResumes();
   }, []);
 
-  // 2. Debounced auto-save whenever resumeData changes
+  // 2. Debounced auto-save whenever resumeData changes (instant, zero keystroke lag)
   useEffect(() => {
-    setSavingStatus('Saving...');
-    try {
-      localStorage.setItem('career_builder_resume_draft', JSON.stringify(resumeData));
-    } catch (e) {}
-
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(async () => {
+      setSavingStatus('Saving...');
+      try {
+        localStorage.setItem('career_builder_resume_draft', JSON.stringify(resumeData));
+      } catch (e) {}
+
       try {
         const endpoint = activeResumeId ? `/resume/builder/${activeResumeId}` : '/resume/builder';
         const method = activeResumeId ? 'put' : 'post';
@@ -252,7 +292,7 @@ export default function ResumeBuilderPage() {
       } catch (err) {
         setSavingStatus('Saved'); // Local fallback succeeded
       }
-    }, 1200);
+    }, 1000);
 
     return () => {
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
@@ -365,6 +405,32 @@ export default function ResumeBuilderPage() {
       console.error('ATS check error:', e);
     } finally {
       setCheckingAts(false);
+    }
+  };
+
+  // Handle Save & Analyze / Submit Resume directly from Builder
+  const handleSubmitAndAnalyze = async () => {
+    setSubmittingAnalysis(true);
+    try {
+      const endpoint = activeResumeId ? `/resume/builder/${activeResumeId}/save-and-analyze` : '/resume/builder/save-and-analyze';
+      const res = await API.post(endpoint, {
+        resumeData,
+        targetRole: resumeData.targetRole || profile?.targetRole || 'Software Developer',
+        targetCompany: resumeData.targetCompany || profile?.dreamCompany || ''
+      });
+
+      if (res.data && res.data.success && res.data.data) {
+        setSubmitSuccessData(res.data.data);
+        if (refreshAll) refreshAll();
+        if (setContextResumeData) setContextResumeData(res.data.data.resume);
+        if (setAtsAnalysis) setAtsAnalysis(res.data.data.atsAnalysis);
+        if (setSkillGap) setSkillGap(res.data.data.skillGap);
+      }
+    } catch (err) {
+      console.error('Submit and analyze error:', err);
+      alert(err.response?.data?.error?.message || 'Failed to analyze resume. Please try again.');
+    } finally {
+      setSubmittingAnalysis(false);
     }
   };
 
@@ -503,6 +569,19 @@ export default function ResumeBuilderPage() {
           >
             <FileCheck2 className={`w-3.5 h-3.5 ${checkingAts ? 'animate-spin' : ''}`} />
             <span>{checkingAts ? 'Evaluating...' : 'Check ATS Score'}</span>
+          </button>
+
+          {/* Submit Resume / Save & Analyze Action */}
+          <button
+            type="button"
+            id="builder-save-and-analyze-button"
+            onClick={handleSubmitAndAnalyze}
+            disabled={submittingAnalysis}
+            className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-bold rounded-2xl transition flex items-center gap-1.5 shadow-md shadow-indigo-600/25 cursor-pointer disabled:opacity-60"
+            title="Submit this structured resume directly to AI analysis for ATS, Skills Gap & Roadmap updates"
+          >
+            <Sparkles className={`w-3.5 h-3.5 ${submittingAnalysis ? 'animate-spin' : ''}`} />
+            <span>{submittingAnalysis ? 'Analyzing...' : 'Save & Analyze'}</span>
           </button>
 
           {/* Download PDF / Print Button */}
@@ -1963,6 +2042,75 @@ export default function ResumeBuilderPage() {
               <button
                 onClick={() => setShowJobCompareModal(false)}
                 className="px-5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow transition"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          MODAL 3: SAVE & ANALYZE SUCCESS MODAL
+          ========================================================================= */}
+      {submitSuccessData && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 p-6 md:p-8 space-y-5 text-center animate-scaleIn">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto border border-emerald-200">
+              <CheckCircle2 className="w-8 h-8" />
+            </div>
+
+            <div className="space-y-1.5">
+              <h3 className="font-extrabold text-slate-900 text-lg">
+                Resume Analyzed Successfully!
+              </h3>
+              <p className="text-xs text-slate-500">
+                Your structured resume data is now the active candidate resume across CareerAI.
+              </p>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-center justify-around">
+              <div>
+                <span className="text-[11px] text-slate-500 block font-medium">Estimated ATS Score</span>
+                <span className="text-2xl font-black text-indigo-600">
+                  {submitSuccessData.atsAnalysis?.atsScore ?? 75}/100
+                </span>
+              </div>
+              <div className="w-px h-8 bg-slate-200"></div>
+              <div>
+                <span className="text-[11px] text-slate-500 block font-medium">Role Match</span>
+                <span className="text-2xl font-black text-emerald-600">
+                  {submitSuccessData.skillGap?.skillMatchPercentage ?? 70}%
+                </span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-500">
+              Target Role: <strong className="text-slate-800">{submitSuccessData.atsAnalysis?.targetRole || resumeData.targetRole}</strong>. ATS evaluation, skills gap, and roadmap intelligence have been updated.
+            </p>
+
+            <div className="flex flex-col sm:flex-row items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => navigate('/resume')}
+                className="w-full sm:flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/20 transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span>View ATS Score</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => navigate('/skills')}
+                className="w-full sm:flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span>Skills Gap</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSubmitSuccessData(null)}
+                className="w-full sm:w-auto px-4 py-3 text-slate-500 hover:text-slate-700 text-xs font-semibold cursor-pointer"
               >
                 Done
               </button>

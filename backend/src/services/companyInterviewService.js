@@ -12,7 +12,7 @@ class CompanyInterviewService {
     this.geminiApiKey = env.GEMINI_COMMUNICATION_API || env.GEMINI_API_KEY;
     this.deepgramApiKey = env.SPEECH_TO_TEXT_API_KEY || env.VOICE_AGENT_API_KEY;
     this.ttsApiKey = env.TEXT_TO_SPEECH_API_KEY || env.SPEECH_TO_TEXT_API_KEY;
-    this.models = ['models/gemini-2.5-flash', 'models/gemini-3.5-flash-lite', 'models/gemini-flash-lite-latest', 'models/gemini-3.1-flash-lite'];
+    this.models = ['models/gemini-3.5-flash-lite', 'models/gemini-3.8-flash'];
   }
 
   // 1. Tavily Search Helper

@@ -120,6 +120,10 @@ function doesJobMatchLocation(jobLocation, jobTitle, targetCity) {
   return locLower.includes(targetLower) || titleLower.includes(targetLower);
 }
 
+// In-memory cache with 15-minute TTL
+const inMemoryJobCache = new Map();
+const CACHE_TTL_MS = 15 * 60 * 1000;
+
 class JobAggregator {
   // 1. Indian Jobs API / Google Jobs via SerpApi
   async fetchGoogleJobs({ effectiveRole, normalizedCity, normalizedFullLocation, workMode }) {
@@ -212,14 +216,14 @@ class JobAggregator {
       const loc = normalizedCity || 'India';
 
       const res = await axios.post(
-        `https://api.apify.com/v2/acts/misceres~indeed-scraper/run-sync-get-dataset-items?token=${env.APIFY_API_KEY}&timeout=25`,
+        `https://api.apify.com/v2/acts/misceres~indeed-scraper/run-sync-get-dataset-items?token=${env.APIFY_API_KEY}&timeout=5`,
         {
           position,
           location: loc,
           country: 'IN',
           maxItems: 8
         },
-        { timeout: 28000 }
+        { timeout: 6000 }
       );
 
       const items = Array.isArray(res.data) ? res.data : [];
@@ -379,8 +383,62 @@ class JobAggregator {
   // Main aggregator method
   async aggregateAll({ q, role, location, workMode, company } = {}) {
     const { queryTerms, effectiveRole, normalizedCity, normalizedFullLocation } = parseSearchAndLocation(q, location, role, company);
+    const cacheKey = `${effectiveRole}_${normalizedCity}_${workMode || 'All'}_${company || ''}`.toLowerCase().trim();
 
-    console.log(`[Jobs] Searching: ${normalizedFullLocation || normalizedCity || effectiveRole || 'Software Engineer'}`);
+    // 1. Fast in-memory cache hit (<1ms)
+    const cachedEntry = inMemoryJobCache.get(cacheKey);
+    if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_TTL_MS) && cachedEntry.data.length > 0) {
+      console.log(`[Jobs] Fast in-memory cache hit for "${cacheKey}" (${cachedEntry.data.length} jobs)`);
+      return cachedEntry.data;
+    }
+
+    // 2. Fast MongoDB database cache hit (<15ms)
+    try {
+      const dbQuery = {};
+      if (normalizedCity && normalizedCity.toLowerCase() !== 'remote' && normalizedCity.toLowerCase() !== 'india') {
+        dbQuery.location = new RegExp(normalizedCity, 'i');
+      }
+      if (workMode && workMode !== 'All') {
+        dbQuery.workMode = new RegExp(`^${workMode}$`, 'i');
+      }
+      if (company && company.trim()) {
+        dbQuery.company = new RegExp(company.trim(), 'i');
+      } else if (effectiveRole) {
+        const primaryTerm = effectiveRole.split(' ')[0];
+        if (primaryTerm && primaryTerm.length > 2) {
+          dbQuery.$or = [
+            { title: new RegExp(primaryTerm, 'i') },
+            { description: new RegExp(primaryTerm, 'i') }
+          ];
+        }
+      }
+
+      const dbJobs = await Job.find(dbQuery).sort({ updatedAt: -1 }).limit(30).lean();
+      if (dbJobs && dbJobs.length >= 6) {
+        console.log(`[Jobs] Fast MongoDB cache hit for "${cacheKey}" (${dbJobs.length} jobs)`);
+        const formatted = dbJobs.map(j => ({
+          id: j.sourceJobId || String(j._id),
+          sourceJobId: j.sourceJobId || String(j._id),
+          title: j.title,
+          company: j.company,
+          location: j.location,
+          employmentType: j.employmentType || 'Full-time',
+          workMode: j.workMode || 'Onsite',
+          description: j.description,
+          skills: Array.isArray(j.skills) && j.skills.length > 0 ? j.skills : ['Problem Solving'],
+          salary: j.salary || 'Not disclosed',
+          applyUrl: j.applyUrl,
+          source: j.source,
+          postedAt: j.postedAt || 'Recently'
+        }));
+        inMemoryJobCache.set(cacheKey, { timestamp: Date.now(), data: formatted });
+        return formatted;
+      }
+    } catch (e) {
+      console.warn('[Jobs] DB cache query notice:', e.message);
+    }
+
+    console.log(`[Jobs] Querying external providers: ${normalizedFullLocation || normalizedCity || effectiveRole || 'Software Engineer'}`);
 
     // Call providers with fallback support
     const [googleJobs, apifyJobs, museJobs, findworkJobs] = await Promise.all([
@@ -451,6 +509,9 @@ class JobAggregator {
         { upsert: true }
       ).catch(() => {});
     }
+
+    // Cache result in memory
+    inMemoryJobCache.set(cacheKey, { timestamp: Date.now(), data: deduped });
 
     return deduped;
   }

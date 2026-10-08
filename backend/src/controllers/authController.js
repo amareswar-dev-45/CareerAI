@@ -4,9 +4,11 @@ const User = require('../models/User');
 const CandidateProfile = require('../models/CandidateProfile');
 const Resume = require('../models/Resume');
 const ATSAnalysis = require('../models/ATSAnalysis');
+const SkillGap = require('../models/SkillGap');
 const pdfParse = require('pdf-parse');
 const aiService = require('../services/aiService');
 const { calculateCareerReadiness } = require('../utils/readinessEngine');
+const { findRoleRequirements } = require('../utils/roleTaxonomy');
 
 const sanitizeUser = (user) => {
   const obj = user.toObject ? user.toObject() : { ...user };
@@ -274,13 +276,15 @@ exports.getProfile = async (req, res) => {
     if (!profile.readinessBreakdown || profile.readinessScore > 100) {
       const resume = await Resume.findOne({ userId: req.user.firebaseUid });
       const ats = await ATSAnalysis.findOne({ userId: req.user.firebaseUid });
+      const hasResume = Boolean(resume && (resume.extractedText || resume.atsScore > 0 || (resume.parsedData?.skills && resume.parsedData.skills.length > 0)));
       const readiness = calculateCareerReadiness({
         resumeSkills: resume?.parsedData?.skills || ats?.skillsFound || [],
-        roleMatchPercentage: profile.skillsScore || 70,
-        atsScore: profile.resumeScore || 75,
-        hasProjects: true,
-        projectCount: 2,
-        interviewScore: profile.interviewScore || 70,
+        roleMatchPercentage: hasResume ? (profile.skillsScore || 70) : 0,
+        atsScore: hasResume ? (profile.resumeScore || 75) : 0,
+        hasProjects: hasResume,
+        projectCount: hasResume ? 2 : 0,
+        interviewScore: profile.interviewScore || 0,
+        hasResume,
         profile: {
           collegeName: profile.collegeName,
           degree: profile.degree,
@@ -350,15 +354,15 @@ exports.completeOnboarding = async (req, res) => {
       });
     }
 
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'VALIDATION_ERROR', message: 'Please upload your resume file.' }
-      });
-    }
+    const cleanCollege = collegeName.trim();
+    const cleanDegree = degree.trim();
+    const cleanGradYear = String(graduationYear || '2026').trim();
+    const cleanDreamCompany = dreamCompany.trim();
+    const cleanTargetRole = targetRole.trim();
 
-    let extractedText = `${user.name} | ${degree} | ${collegeName} | Target: ${targetRole}`;
+    // CASE 1: USER UPLOADED A RESUME
     if (req.file) {
+      let extractedText = `${user.name} | ${cleanDegree} | ${cleanCollege} | Target: ${cleanTargetRole}`;
       if (req.file.mimetype === 'application/pdf') {
         try {
           const parsedPdf = await pdfParse(req.file.buffer);
@@ -372,83 +376,226 @@ exports.completeOnboarding = async (req, res) => {
       } else {
         extractedText = req.file.buffer.toString('utf-8');
       }
-    }
 
-    // Real ATS Analysis against target role using Groq
-    const atsResult = await aiService.analyzeResumeAgainstTargetRole(extractedText, targetRole.trim());
-    const atsScore = atsResult.atsScore || 75;
+      // Real ATS Analysis against target role using Groq
+      const atsResult = await aiService.analyzeResumeAgainstTargetRole(extractedText, cleanTargetRole);
+      const atsScore = atsResult.atsScore || 75;
 
-    const resumeDoc = await Resume.findOneAndUpdate(
-      { userId: user.firebaseUid },
-      {
-        $set: {
-          fileUrl: `uploads/${req.file.originalname}`,
-          fileName: req.file.originalname,
-          mimeType: req.file.mimetype,
-          extractedText,
-          parsedData: {
-            skills: atsResult.skillsFound || [],
-            education: [{ institution: collegeName.trim(), degree: degree.trim(), year: (graduationYear || '2026').trim() }],
-            experience: [],
-            projects: []
-          },
-          targetRole: targetRole.trim(),
-          atsScore: atsScore,
+      const resumeDoc = await Resume.findOneAndUpdate(
+        { userId: user.firebaseUid },
+        {
+          $set: {
+            fileUrl: `uploads/${req.file.originalname}`,
+            fileName: req.file.originalname,
+            mimeType: req.file.mimetype,
+            extractedText,
+            parsedData: {
+              skills: atsResult.skillsFound || [],
+              education: [{ institution: cleanCollege, degree: cleanDegree, year: cleanGradYear }],
+              experience: [],
+              projects: []
+            },
+            targetRole: cleanTargetRole,
+            atsScore: atsScore,
+            atsAnalysis: atsResult
+          }
+        },
+        { new: true, upsert: true }
+      );
+
+      const atsAnalysisDoc = await ATSAnalysis.findOneAndUpdate(
+        { userId: user.firebaseUid },
+        {
+          $set: {
+            targetRole: cleanTargetRole,
+            score: atsScore,
+            atsScore: atsScore,
+            requiredSkills: atsResult.requiredSkills || [],
+            skillsFound: atsResult.skillsFound || [],
+            missingSkills: atsResult.missingSkills || [],
+            strengths: atsResult.strengths || [],
+            improvements: atsResult.improvements || [],
+            relevantExperience: atsResult.relevantExperience || 'Relevant academic or personal projects listed',
+            educationMatch: atsResult.educationMatch || 'Degree matches standard technical prerequisites',
+            missingKeywords: atsResult.missingKeywords || [],
+            suggestedImprovements: atsResult.suggestedImprovements || [],
+            keywordCoverage: Math.round(((atsResult.skillsFound?.length || 1) / Math.max(atsResult.requiredSkills?.length || 1, 1)) * 100),
+            formattingScore: 85,
+            skillsMatchScore: Math.round(((atsResult.skillsFound?.length || 1) / Math.max(atsResult.requiredSkills?.length || 1, 1)) * 100),
+            experienceScore: 70
+          }
+        },
+        { new: true, upsert: true }
+      );
+
+      // Synchronize Skill Gap immediately
+      const gapData = await aiService.calculateSkillGap(atsResult.skillsFound || [], cleanTargetRole, req.file.originalname, true);
+      await SkillGap.findOneAndUpdate(
+        { userId: user.firebaseUid },
+        {
+          $set: {
+            targetRole: cleanTargetRole,
+            resumeFileName: req.file.originalname,
+            readinessScore: gapData.skillMatchPercentage,
+            skillMatchPercentage: gapData.skillMatchPercentage,
+            skillsYouHave: gapData.skillsYouHave,
+            skillsToImprove: gapData.skillsToImprove,
+            scoreBreakdown: gapData.scoreBreakdown,
+            skillsBreakdown: gapData.skillsBreakdown,
+            requiredSkills: gapData.requiredSkills,
+            existingSkills: gapData.existingSkills,
+            missingSkills: gapData.missingSkills,
+            prioritySkills: gapData.prioritySkills,
+            note: gapData.note,
+            analyzedAt: new Date()
+          }
+        },
+        { new: true, upsert: true }
+      );
+
+      // Update user record
+      user.collegeName = cleanCollege;
+      user.degree = cleanDegree;
+      user.graduationYear = cleanGradYear;
+      user.dreamCompany = cleanDreamCompany;
+      user.targetRole = cleanTargetRole;
+      user.resumeStatus = 'uploaded';
+      user.onboardingCompleted = true;
+      await user.save();
+
+      // Calculate scientifically normalized career readiness
+      const readiness = calculateCareerReadiness({
+        resumeSkills: atsResult.skillsFound || [],
+        roleMatchPercentage: atsAnalysisDoc.skillsMatchScore,
+        atsScore: atsScore,
+        hasProjects: true,
+        projectCount: 2,
+        interviewScore: 70,
+        hasResume: true,
+        profile: {
+          collegeName: user.collegeName,
+          degree: user.degree,
+          targetRole: user.targetRole,
+          dreamCompany: user.dreamCompany
+        }
+      });
+
+      // Update CandidateProfile record
+      const profile = await CandidateProfile.findOneAndUpdate(
+        { userId: user.firebaseUid },
+        {
+          $set: {
+            name: user.name,
+            email: user.email,
+            collegeName: user.collegeName,
+            degree: user.degree,
+            graduationYear: user.graduationYear,
+            dreamCompany: user.dreamCompany,
+            targetRole: user.targetRole,
+            resumeScore: atsScore,
+            skillsScore: atsAnalysisDoc.skillsMatchScore,
+            readinessScore: readiness.readinessScore,
+            readinessBreakdown: readiness.breakdown,
+            resumeStatus: 'uploaded',
+            onboardingCompleted: true
+          }
+        },
+        { new: true, upsert: true }
+      );
+
+      return res.json({
+        success: true,
+        message: 'Onboarding completed successfully',
+        data: {
+          user: sanitizeUser(user),
+          profile,
+          resume: resumeDoc,
           atsAnalysis: atsResult
         }
-      },
-      { new: true, upsert: true }
-    );
+      });
+    }
+
+    // CASE 2 & 3: USER SKIPPED OR WILL CREATE RESUME (NO FILE UPLOADED)
+    const assignedStatus = req.body.resumeStatus === 'created' ? 'created' : 'skipped';
+    const roleReq = findRoleRequirements(cleanTargetRole);
+
+    // ATS Readiness must be strictly 0 / 100 with clear explanation
+    const atsResult = {
+      score: 0,
+      atsScore: 0,
+      targetRole: cleanTargetRole,
+      requiredSkills: roleReq.requiredSkills || [],
+      skillsFound: [],
+      missingSkills: roleReq.requiredSkills || [],
+      strengths: [`Profile created for target role: ${cleanTargetRole}`],
+      improvements: ['No resume available for analysis. Upload an existing resume or build one with Resume Builder.'],
+      relevantExperience: 'No resume evidence currently available',
+      educationMatch: `${cleanDegree} from ${cleanCollege} entered during onboarding`,
+      missingKeywords: roleReq.requiredSkills || [],
+      suggestedImprovements: ['Create or upload a resume to generate comprehensive ATS evaluation against ' + cleanTargetRole],
+      keywordCoverage: 0,
+      formattingScore: 0,
+      skillsMatchScore: 0,
+      experienceScore: 0
+    };
 
     const atsAnalysisDoc = await ATSAnalysis.findOneAndUpdate(
       { userId: user.firebaseUid },
+      { $set: atsResult },
+      { new: true, upsert: true }
+    );
+
+    // Calculate role-based Skill Gap without fabricating user skills
+    const gapData = await aiService.calculateSkillGap([], cleanTargetRole, 'No Resume', false);
+    await SkillGap.findOneAndUpdate(
+      { userId: user.firebaseUid },
       {
         $set: {
-          targetRole: targetRole.trim(),
-          score: atsScore,
-          atsScore: atsScore,
-          requiredSkills: atsResult.requiredSkills || [],
-          skillsFound: atsResult.skillsFound || [],
-          missingSkills: atsResult.missingSkills || [],
-          strengths: atsResult.strengths || [],
-          improvements: atsResult.improvements || [],
-          relevantExperience: atsResult.relevantExperience || 'Relevant academic or personal projects listed',
-          educationMatch: atsResult.educationMatch || 'Degree matches standard technical prerequisites',
-          missingKeywords: atsResult.missingKeywords || [],
-          suggestedImprovements: atsResult.suggestedImprovements || [],
-          keywordCoverage: Math.round(((atsResult.skillsFound?.length || 1) / Math.max(atsResult.requiredSkills?.length || 1, 1)) * 100),
-          formattingScore: 85,
-          skillsMatchScore: Math.round(((atsResult.skillsFound?.length || 1) / Math.max(atsResult.requiredSkills?.length || 1, 1)) * 100),
-          experienceScore: 70
+          targetRole: cleanTargetRole,
+          resumeFileName: 'No Resume',
+          readinessScore: 0,
+          skillMatchPercentage: 0,
+          skillsYouHave: [],
+          skillsToImprove: gapData.skillsToImprove,
+          scoreBreakdown: gapData.scoreBreakdown,
+          skillsBreakdown: gapData.skillsBreakdown,
+          requiredSkills: gapData.requiredSkills,
+          existingSkills: [],
+          missingSkills: gapData.missingSkills,
+          prioritySkills: gapData.prioritySkills,
+          note: `No resume provided. Skill gap is evaluated against market baseline for ${cleanTargetRole}. Skills without evidence are marked as Not provided / Not verified.`,
+          analyzedAt: new Date()
         }
       },
       { new: true, upsert: true }
     );
 
-    // Update user record
-    user.collegeName = collegeName.trim();
-    user.degree = degree.trim();
-    user.graduationYear = (graduationYear || '2026').trim();
-    user.dreamCompany = dreamCompany.trim();
-    user.targetRole = targetRole.trim();
-    user.onboardingCompleted = true;
-    await user.save();
-
-    // Calculate scientifically normalized career readiness
+    // Calculate scientifically normalized career readiness with zero resume evidence
     const readiness = calculateCareerReadiness({
-      resumeSkills: atsResult.skillsFound || [],
-      roleMatchPercentage: atsAnalysisDoc.skillsMatchScore,
-      atsScore: atsScore,
-      hasProjects: true,
-      projectCount: 2,
-      interviewScore: 70,
+      resumeSkills: [],
+      roleMatchPercentage: 0,
+      atsScore: 0,
+      hasProjects: false,
+      projectCount: 0,
+      interviewScore: 0,
+      hasResume: false,
       profile: {
-        collegeName: user.collegeName,
-        degree: user.degree,
-        targetRole: user.targetRole,
-        dreamCompany: user.dreamCompany
+        collegeName: cleanCollege,
+        degree: cleanDegree,
+        targetRole: cleanTargetRole,
+        dreamCompany: cleanDreamCompany
       }
     });
+
+    // Update user record
+    user.collegeName = cleanCollege;
+    user.degree = cleanDegree;
+    user.graduationYear = cleanGradYear;
+    user.dreamCompany = cleanDreamCompany;
+    user.targetRole = cleanTargetRole;
+    user.resumeStatus = assignedStatus;
+    user.onboardingCompleted = true;
+    await user.save();
 
     // Update CandidateProfile record
     const profile = await CandidateProfile.findOneAndUpdate(
@@ -462,10 +609,11 @@ exports.completeOnboarding = async (req, res) => {
           graduationYear: user.graduationYear,
           dreamCompany: user.dreamCompany,
           targetRole: user.targetRole,
-          resumeScore: atsScore,
-          skillsScore: atsAnalysisDoc.skillsMatchScore,
+          resumeScore: 0,
+          skillsScore: 0,
           readinessScore: readiness.readinessScore,
           readinessBreakdown: readiness.breakdown,
+          resumeStatus: assignedStatus,
           onboardingCompleted: true
         }
       },
@@ -478,7 +626,7 @@ exports.completeOnboarding = async (req, res) => {
       data: {
         user: sanitizeUser(user),
         profile,
-        resume: resumeDoc,
+        resume: null,
         atsAnalysis: atsResult
       }
     });

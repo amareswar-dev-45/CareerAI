@@ -25,7 +25,8 @@ const CandidateProfileSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.Mixed,
     default: null
   },
-  onboardingCompleted: { type: Boolean, default: false }
+  onboardingCompleted: { type: Boolean, default: false },
+  resumeStatus: { type: String, enum: ['uploaded', 'created', 'skipped', 'none'], default: 'none' }
 }, { timestamps: true });
 
 module.exports = mongoose.model('CandidateProfile', CandidateProfileSchema);

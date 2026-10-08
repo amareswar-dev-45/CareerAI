@@ -24,13 +24,14 @@ export default function Dashboard() {
   const { user } = useAuth();
   const firstName = user?.name ? user.name.split(' ')[0] : 'Amareswar';
 
-  const validatedScore = Math.max(0, Math.min(100, Math.round(profile?.readinessScore ?? 78)));
+  const isSkipped = profile?.resumeStatus === 'skipped';
+  const validatedScore = Math.max(0, Math.min(100, Math.round(profile?.readinessScore ?? (isSkipped ? 10 : 78))));
   const b = profile?.readinessBreakdown || {
-    resumeSkills: { score: Math.round(((profile?.resumeScore || 80) / 100) * 30), max: 30, label: 'Resume Skills' },
-    targetRoleMatch: { score: Math.round(((profile?.skillsScore || 75) / 100) * 25), max: 25, label: 'Target Role Match' },
-    experienceProjects: { score: 15, max: 20, label: 'Experience & Projects' },
-    interviewReadiness: { score: Math.round(((profile?.interviewScore || 70) / 100) * 15), max: 15, label: 'Interview Readiness' },
-    profileCompleteness: { score: Math.round(((profile?.profileCompletion || 85) / 100) * 10), max: 10, label: 'Profile Completeness' }
+    resumeSkills: { score: isSkipped ? 0 : Math.round(((profile?.resumeScore || 80) / 100) * 30), max: 30, label: 'Resume Skills' },
+    targetRoleMatch: { score: isSkipped ? 0 : Math.round(((profile?.skillsScore || 75) / 100) * 25), max: 25, label: 'Target Role Match' },
+    experienceProjects: { score: isSkipped ? 0 : 15, max: 20, label: 'Experience & Projects' },
+    interviewReadiness: { score: Math.round(((profile?.interviewScore || 0) / 100) * 15), max: 15, label: 'Interview Readiness' },
+    profileCompleteness: { score: Math.round(((profile?.profileCompletion || (isSkipped ? 100 : 85)) / 100) * 10), max: 10, label: 'Profile Completeness' }
   };
 
   return (
@@ -47,24 +48,67 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Resume Skipped Notice Banner */}
+      {isSkipped && (
+        <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-900">
+          <div className="flex items-start gap-2.5">
+            <Clock className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-semibold text-amber-900">Resume Skipped During Onboarding</p>
+              <p className="text-amber-700 text-[11px]">
+                Your readiness is currently marked as <strong>Insufficient profile evidence</strong>. Build a structured resume or upload your file at any time to unlock verified ATS score and skill matching.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => {
+                if (setActiveTab) setActiveTab('builder');
+                navigate('/resume-builder');
+              }}
+              className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
+            >
+              Create Resume
+            </button>
+            <button
+              onClick={() => {
+                if (setActiveTab) setActiveTab('resume');
+                navigate('/resume');
+              }}
+              className="px-3.5 py-1.5 bg-white border border-amber-300 hover:bg-amber-100 text-amber-900 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer"
+            >
+              Upload Resume
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Top Grid: Career Readiness & Next Best Action */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Main Readiness Gauge with Breakdown */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center gap-6">
           <div className="relative flex flex-col items-center">
-            <ScoreGauge value={validatedScore} size={130} color={validatedScore >= 75 ? '#10B981' : (validatedScore >= 55 ? '#0EA5E9' : '#F59E0B')} />
+            <ScoreGauge value={validatedScore} size={130} color={isSkipped ? '#F59E0B' : (validatedScore >= 75 ? '#10B981' : (validatedScore >= 55 ? '#0EA5E9' : '#F59E0B'))} />
             <div className="mt-2 text-center">
               <span className="text-2xl font-black text-slate-900">{validatedScore}</span>
               <span className="text-xs font-bold text-slate-400">/100</span>
             </div>
-            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 mt-1">
-              Normalized & Grounded
-            </span>
+            {isSkipped ? (
+              <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 mt-1 text-center">
+                Insufficient profile evidence
+              </span>
+            ) : (
+              <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 mt-1">
+                Normalized & Grounded
+              </span>
+            )}
           </div>
 
           <div className="flex-1 w-full space-y-2">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Career Readiness</h3>
+              <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                {isSkipped ? 'Profile Evidence' : 'Career Readiness'}
+              </h3>
               <span className="text-[11px] font-bold text-indigo-600">{validatedScore}/100 Total</span>
             </div>
             
@@ -72,30 +116,36 @@ export default function Dashboard() {
               <div>
                 <div className="flex justify-between items-center text-slate-600 text-[11px] mb-0.5">
                   <span>Resume Skills</span>
-                  <span className="font-bold text-slate-800">{b.resumeSkills?.score || 0}/30</span>
+                  <span className="font-bold text-slate-800">
+                    {isSkipped ? 'Not provided (0/30)' : `${b.resumeSkills?.score || 0}/30`}
+                  </span>
                 </div>
                 <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                  <div className="bg-indigo-600 h-full rounded-full" style={{ width: `${((b.resumeSkills?.score || 0) / 30) * 100}%` }}></div>
+                  <div className="bg-indigo-600 h-full rounded-full" style={{ width: `${isSkipped ? 0 : ((b.resumeSkills?.score || 0) / 30) * 100}%` }}></div>
                 </div>
               </div>
 
               <div>
                 <div className="flex justify-between items-center text-slate-600 text-[11px] mb-0.5">
                   <span>Target Role Match</span>
-                  <span className="font-bold text-slate-800">{b.targetRoleMatch?.score || 0}/25</span>
+                  <span className="font-bold text-slate-800">
+                    {isSkipped ? 'Unverified (0/25)' : `${b.targetRoleMatch?.score || 0}/25`}
+                  </span>
                 </div>
                 <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                  <div className="bg-sky-500 h-full rounded-full" style={{ width: `${((b.targetRoleMatch?.score || 0) / 25) * 100}%` }}></div>
+                  <div className="bg-sky-500 h-full rounded-full" style={{ width: `${isSkipped ? 0 : ((b.targetRoleMatch?.score || 0) / 25) * 100}%` }}></div>
                 </div>
               </div>
 
               <div>
                 <div className="flex justify-between items-center text-slate-600 text-[11px] mb-0.5">
                   <span>Experience / Projects</span>
-                  <span className="font-bold text-slate-800">{b.experienceProjects?.score || 0}/20</span>
+                  <span className="font-bold text-slate-800">
+                    {isSkipped ? 'Not provided (0/20)' : `${b.experienceProjects?.score || 0}/20`}
+                  </span>
                 </div>
                 <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                  <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${((b.experienceProjects?.score || 0) / 20) * 100}%` }}></div>
+                  <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${isSkipped ? 0 : ((b.experienceProjects?.score || 0) / 20) * 100}%` }}></div>
                 </div>
               </div>
 

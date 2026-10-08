@@ -35,6 +35,7 @@ import {
   Edit3
 } from 'lucide-react';
 import ScoreGauge from '../components/common/ScoreGauge';
+import AIInterviewVideoStage from '../components/interview/AIInterviewVideoStage';
 import { useCareer } from '../context/CareerContext';
 import { useAuth } from '../context/AuthContext';
 import API from '../services/api';
@@ -90,6 +91,8 @@ export default function InterviewCenterPage() {
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
+  const [cameraStream, setCameraStream] = useState(null);
+  const [cameraError, setCameraError] = useState(null);
   const [audioMuted, setAudioMuted] = useState(false);
   const [liveToken, setLiveToken] = useState(null);
   const [sendingHrMessage, setSendingHrMessage] = useState(false);
@@ -187,9 +190,12 @@ export default function InterviewCenterPage() {
     return () => clearInterval(interval);
   }, [aptitudeSession, aptitudeResult, aptitudeTimer]);
 
-  // Cleanup video stream on unmount
+  // Cleanup media streams on unmount
   useEffect(() => {
     return () => {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(t => t.stop());
+      }
       if (videoRef.current && videoRef.current.srcObject) {
         videoRef.current.srcObject.getTracks().forEach(t => t.stop());
       }
@@ -197,7 +203,7 @@ export default function InterviewCenterPage() {
         audioPlayerRef.current.pause();
       }
     };
-  }, []);
+  }, [cameraStream]);
 
   const formatTimer = (secs) => {
     const m = Math.floor(secs / 60);
@@ -237,6 +243,7 @@ export default function InterviewCenterPage() {
   // ==================== 1. APTITUDE ACTIONS ====================
   const handleStartAptitude = async () => {
     setAptStarting(true);
+    startCamera();
     try {
       const res = await API.post('/interview/aptitude/start', {
         company: targetCompany,
@@ -291,6 +298,7 @@ export default function InterviewCenterPage() {
     setCurrentTechEval(null);
     setTechFinalResult(null);
     setShowModelAnswer(false);
+    startCamera();
     try {
       const res = await API.post('/interview/technical/start', {
         company: targetCompany,
@@ -364,6 +372,7 @@ export default function InterviewCenterPage() {
   // ==================== 3. HR (GEMINI LIVE) ACTIONS ====================
   const handleStartHR = async () => {
     setHrStarting(true);
+    startCamera();
     try {
       const res = await API.post('/interview/hr/start', {
         company: targetCompany,
@@ -384,26 +393,70 @@ export default function InterviewCenterPage() {
     }
   };
 
+  // Start Camera Stream
+  const startCamera = async () => {
+    try {
+      setCameraError(null);
+      if (cameraStream && cameraStream.active) {
+        setCameraActive(true);
+        return cameraStream;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          width: { ideal: 1280 }, 
+          height: { ideal: 720 },
+          facingMode: 'user'
+        }, 
+        audio: false 
+      });
+      setCameraStream(stream);
+      setCameraActive(true);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+      return stream;
+    } catch (err) {
+      console.warn('Camera access notice:', err.message);
+      setCameraError(err.name === 'NotAllowedError' 
+        ? 'Camera permission was denied in your browser settings.' 
+        : 'Webcam device unavailable or disconnected.');
+      setCameraActive(false);
+      return null;
+    }
+  };
+
+  // Stop Camera Stream
+  const stopCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(t => t.stop());
+      setCameraStream(null);
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraActive(false);
+  };
+
   // Toggle Camera
   const toggleCamera = async () => {
     if (cameraActive) {
-      if (videoRef.current && videoRef.current.srcObject) {
-        videoRef.current.srcObject.getTracks().forEach(t => t.stop());
-        videoRef.current.srcObject = null;
-      }
-      setCameraActive(false);
+      stopCamera();
     } else {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-        setCameraActive(true);
-      } catch (err) {
-        console.warn('Camera access unavailable:', err.message);
-      }
+      await startCamera();
     }
   };
+
+  // Auto-activate camera when entering any active interview round
+  useEffect(() => {
+    const isRoundActive = 
+      (activeTab === 'aptitude' && aptitudeSession && !aptitudeResult) ||
+      (activeTab === 'technical' && techSession && !techFinalResult) ||
+      (activeTab === 'hr' && hrSession && !finalReport);
+
+    if (isRoundActive && !cameraActive && !cameraError) {
+      startCamera();
+    }
+  }, [activeTab, aptitudeSession, aptitudeResult, techSession, techFinalResult, hrSession, finalReport]);
 
   // Audio Recording with MediaRecorder
   const startRecordingAudio = async () => {
@@ -863,75 +916,91 @@ export default function InterviewCenterPage() {
               </div>
             </div>
           ) : (
-            /* ACTIVE APTITUDE TEST */
-            <div className="space-y-6 max-w-2xl mx-auto">
-              <div className="flex justify-between items-center border-b border-slate-100 pb-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl">
-                    Question {currentAptIndex + 1} of {aptitudeSession?.questions?.length || 10}
-                  </span>
-                  <span className="text-[11px] font-medium text-slate-500">
-                    {aptitudeSession?.questions?.[currentAptIndex]?.category}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5 text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200 px-3 py-1 rounded-xl">
-                  <Clock className="w-3.5 h-3.5 text-amber-600" />
-                  <span>{formatTimer(aptitudeTimer)}</span>
-                </div>
-              </div>
+            /* ACTIVE APTITUDE TEST WITH AI VIDEO STAGE */
+            <div className="space-y-6 max-w-4xl mx-auto">
+              {/* Dual-Pane Video Stage: Left AI Interviewer (robot.jpeg), Right Candidate Camera */}
+              <AIInterviewVideoStage
+                company={targetCompany}
+                role={targetRole}
+                roundTitle="Round 1 &bull; Aptitude Assessment"
+                interviewerRole={`${targetCompany} Assessment Proctor`}
+                isAiSpeaking={false}
+                cameraActive={cameraActive}
+                cameraError={cameraError}
+                stream={cameraStream}
+                onToggleCamera={toggleCamera}
+                candidateName={user?.name || profile?.name || 'Candidate'}
+              />
 
-              {/* Question Text */}
-              <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 text-sm font-semibold text-slate-800 leading-relaxed">
-                {aptitudeSession?.questions?.[currentAptIndex]?.questionText}
-              </div>
+              <div className="bg-slate-50/70 p-5 md:p-6 rounded-3xl border border-slate-200 space-y-6">
+                <div className="flex justify-between items-center border-b border-slate-200/60 pb-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl">
+                      Question {currentAptIndex + 1} of {aptitudeSession?.questions?.length || 10}
+                    </span>
+                    <span className="text-[11px] font-medium text-slate-500">
+                      {aptitudeSession?.questions?.[currentAptIndex]?.category}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200 px-3 py-1 rounded-xl">
+                    <Clock className="w-3.5 h-3.5 text-amber-600" />
+                    <span>{formatTimer(aptitudeTimer)}</span>
+                  </div>
+                </div>
 
-              {/* Options */}
-              <div className="space-y-2.5">
-                {(aptitudeSession?.questions?.[currentAptIndex]?.options || []).map((opt, oIdx) => {
-                  const currentQ = aptitudeSession?.questions?.[currentAptIndex];
-                  const qKey = currentQ?.questionId || currentQ?._id;
-                  const isSelected = aptitudeAnswers[qKey] === opt;
-                  return (
+                {/* Question Text */}
+                <div className="p-5 rounded-2xl bg-white border border-slate-200 text-sm font-semibold text-slate-800 leading-relaxed shadow-xs">
+                  {aptitudeSession?.questions?.[currentAptIndex]?.questionText}
+                </div>
+
+                {/* Options */}
+                <div className="space-y-2.5">
+                  {(aptitudeSession?.questions?.[currentAptIndex]?.options || []).map((opt, oIdx) => {
+                    const currentQ = aptitudeSession?.questions?.[currentAptIndex];
+                    const qKey = currentQ?.questionId || currentQ?._id;
+                    const isSelected = aptitudeAnswers[qKey] === opt;
+                    return (
+                      <button
+                        key={oIdx}
+                        onClick={() => handleSelectAptOption(opt)}
+                        className={`w-full text-left p-3.5 rounded-2xl border text-xs font-medium transition flex items-center justify-between cursor-pointer ${
+                          isSelected 
+                            ? 'bg-indigo-50 border-indigo-500 text-indigo-900 shadow-xs font-semibold' 
+                            : 'bg-white border-slate-200 text-slate-700 hover:border-indigo-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span>{opt}</span>
+                        {isSelected && <Check className="w-4 h-4 text-indigo-600 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Next / Submit Buttons */}
+                <div className="flex items-center justify-between pt-4 border-t border-slate-200/60">
+                  <span className="text-[11px] text-slate-400">
+                    Answered {Object.keys(aptitudeAnswers).length} / {aptitudeSession?.questions?.length || 10}
+                  </span>
+
+                  {currentAptIndex < (aptitudeSession?.questions?.length || 10) - 1 ? (
                     <button
-                      key={oIdx}
-                      onClick={() => handleSelectAptOption(opt)}
-                      className={`w-full text-left p-3.5 rounded-2xl border text-xs font-medium transition flex items-center justify-between ${
-                        isSelected 
-                          ? 'bg-indigo-50 border-indigo-500 text-indigo-900 shadow-xs' 
-                          : 'bg-white border-slate-200 text-slate-700 hover:border-indigo-200'
-                      }`}
+                      onClick={() => setCurrentAptIndex(prev => prev + 1)}
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
                     >
-                      <span>{opt}</span>
-                      {isSelected && <Check className="w-4 h-4 text-indigo-600 shrink-0" />}
+                      <span>Next Question</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
                     </button>
-                  );
-                })}
-              </div>
-
-              {/* Next / Submit Buttons */}
-              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
-                <span className="text-[11px] text-slate-400">
-                  Answered {Object.keys(aptitudeAnswers).length} / {aptitudeSession?.questions?.length || 10}
-                </span>
-
-                {currentAptIndex < (aptitudeSession?.questions?.length || 10) - 1 ? (
-                  <button
-                    onClick={() => setCurrentAptIndex(prev => prev + 1)}
-                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5"
-                  >
-                    <span>Next Question</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                ) : (
-                  <button
-                    disabled={submittingApt}
-                    onClick={handleSubmitAptitudeTest}
-                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20"
-                  >
-                    {submittingApt ? <Sparkles className="w-3.5 h-3.5 animate-spin" /> : null}
-                    <span>Submit & Evaluate Assessment</span>
-                  </button>
-                )}
+                  ) : (
+                    <button
+                      disabled={submittingApt}
+                      onClick={handleSubmitAptitudeTest}
+                      className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer disabled:opacity-50"
+                    >
+                      {submittingApt ? <Sparkles className="w-3.5 h-3.5 animate-spin" /> : null}
+                      <span>Submit & Evaluate Assessment</span>
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -1030,95 +1099,111 @@ export default function InterviewCenterPage() {
               </div>
             </div>
           ) : (
-            /* ACTIVE TECHNICAL QUESTION */
-            <div className="space-y-6 max-w-2xl mx-auto">
-              <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-                <span className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl">
-                  Question {currentTechIdx + 1} of {techQuestions.length}
-                </span>
-                <span className="text-xs font-bold text-slate-500">
-                  Topic: {techQuestions[currentTechIdx]?.topic}
-                </span>
-              </div>
+            /* ACTIVE TECHNICAL QUESTION WITH AI VIDEO STAGE */
+            <div className="space-y-6 max-w-4xl mx-auto">
+              {/* Dual-Pane Video Stage: Left AI Technical Interviewer (robot.jpeg), Right Candidate Camera */}
+              <AIInterviewVideoStage
+                company={targetCompany}
+                role={targetRole}
+                roundTitle="Round 2 &bull; Technical Interview"
+                interviewerRole={`${targetCompany} Senior Technical Interviewer`}
+                isAiSpeaking={false}
+                cameraActive={cameraActive}
+                cameraError={cameraError}
+                stream={cameraStream}
+                onToggleCamera={toggleCamera}
+                candidateName={user?.name || profile?.name || 'Candidate'}
+              />
 
-              {/* Question card */}
-              <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 text-sm font-semibold text-slate-800 leading-relaxed">
-                {techQuestions[currentTechIdx]?.questionText}
-              </div>
-
-              {/* Candidate Answer Textarea */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-700">Your Technical Response:</label>
-                  <span className="text-[11px] text-slate-400">Explain your reasoning clearly with examples</span>
+              <div className="bg-slate-50/70 p-5 md:p-6 rounded-3xl border border-slate-200 space-y-6">
+                <div className="flex justify-between items-center border-b border-slate-200/60 pb-3">
+                  <span className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl">
+                    Question {currentTechIdx + 1} of {techQuestions.length}
+                  </span>
+                  <span className="text-xs font-bold text-slate-500">
+                    Topic: {techQuestions[currentTechIdx]?.topic}
+                  </span>
                 </div>
-                <textarea
-                  rows={5}
-                  value={techAnswer}
-                  onChange={(e) => setTechAnswer(e.target.value)}
-                  placeholder="Type your technical explanation or solution here..."
-                  className="w-full p-4 rounded-2xl border border-slate-200 text-xs text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 leading-relaxed"
-                />
-              </div>
 
-              {/* Submit answer */}
-              {!currentTechEval ? (
-                <button
-                  disabled={evaluatingTech || !techAnswer.trim()}
-                  onClick={handleEvaluateTechAnswer}
-                  className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-bold transition flex items-center justify-center gap-2 shadow-md shadow-indigo-600/20 disabled:opacity-50"
-                >
-                  {evaluatingTech ? <Sparkles className="w-4 h-4 animate-spin" /> : null}
-                  <span>{evaluatingTech ? 'Analyzing Answer with AI...' : 'Submit Answer for Objective Feedback'}</span>
-                </button>
-              ) : (
-                /* Real Evaluation Feedback */
-                <div className="space-y-4 p-5 rounded-2xl bg-slate-50 border border-slate-200 text-xs">
+                {/* Question card */}
+                <div className="p-5 rounded-2xl bg-white border border-slate-200 text-sm font-semibold text-slate-800 leading-relaxed shadow-xs">
+                  {techQuestions[currentTechIdx]?.questionText}
+                </div>
+
+                {/* Candidate Answer Textarea */}
+                <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>Answer Score: <strong>{currentTechEval.score}/100</strong></span>
-                    </span>
-                    <button
-                      onClick={() => setShowModelAnswer(!showModelAnswer)}
-                      className="text-[11px] text-indigo-600 hover:underline font-semibold flex items-center gap-1"
-                    >
-                      <Eye className="w-3 h-3" />
-                      <span>{showModelAnswer ? 'Hide Ideal Solution' : 'View Ideal Solution'}</span>
-                    </button>
+                    <label className="text-xs font-bold text-slate-700">Your Technical Response:</label>
+                    <span className="text-[11px] text-slate-400">Explain your reasoning clearly with examples</span>
                   </div>
-
-                  <p className="text-slate-600 leading-relaxed">{currentTechEval.feedback}</p>
-
-                  {showModelAnswer && currentTechEval.betterAnswer && (
-                    <div className="p-3 bg-white rounded-xl border border-indigo-200 space-y-1">
-                      <span className="font-bold text-indigo-900 text-[11px] block">Recommended Technical Solution:</span>
-                      <p className="text-slate-600 text-[11px] leading-relaxed">{currentTechEval.betterAnswer}</p>
-                    </div>
-                  )}
-
-                  <div className="pt-3 border-t border-slate-200/60 flex items-center justify-end">
-                    {currentTechIdx < techQuestions.length - 1 ? (
-                      <button
-                        onClick={handleNextTechQuestion}
-                        className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5"
-                      >
-                        <span>Next Technical Question</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
-                    ) : (
-                      <button
-                        disabled={completingTech}
-                        onClick={handleCompleteTechnicalSession}
-                        className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20"
-                      >
-                        {completingTech ? <Sparkles className="w-3.5 h-3.5 animate-spin" /> : null}
-                        <span>Finalize Technical Round</span>
-                      </button>
-                    )}
-                  </div>
+                  <textarea
+                    rows={5}
+                    value={techAnswer}
+                    onChange={(e) => setTechAnswer(e.target.value)}
+                    placeholder="Type your technical explanation or solution here..."
+                    className="w-full p-4 rounded-2xl border border-slate-200 bg-white text-xs text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 leading-relaxed shadow-xs"
+                  />
                 </div>
-              )}
+
+                {/* Submit answer */}
+                {!currentTechEval ? (
+                  <button
+                    disabled={evaluatingTech || !techAnswer.trim()}
+                    onClick={handleEvaluateTechAnswer}
+                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-bold transition flex items-center justify-center gap-2 shadow-md shadow-indigo-600/20 disabled:opacity-50 cursor-pointer"
+                  >
+                    {evaluatingTech ? <Sparkles className="w-4 h-4 animate-spin" /> : null}
+                    <span>{evaluatingTech ? 'Analyzing Answer with AI...' : 'Submit Answer for Objective Feedback'}</span>
+                  </button>
+                ) : (
+                  /* Real Evaluation Feedback */
+                  <div className="space-y-4 p-5 rounded-2xl bg-white border border-slate-200 text-xs shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>Answer Score: <strong>{currentTechEval.score}/100</strong></span>
+                      </span>
+                      <button
+                        onClick={() => setShowModelAnswer(!showModelAnswer)}
+                        className="text-[11px] text-indigo-600 hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+                      >
+                        <Eye className="w-3 h-3" />
+                        <span>{showModelAnswer ? 'Hide Ideal Solution' : 'View Ideal Solution'}</span>
+                      </button>
+                    </div>
+
+                    <p className="text-slate-600 leading-relaxed">{currentTechEval.feedback}</p>
+
+                    {showModelAnswer && currentTechEval.betterAnswer && (
+                      <div className="p-3 bg-slate-50 rounded-xl border border-indigo-200 space-y-1">
+                        <span className="font-bold text-indigo-900 text-[11px] block">Recommended Technical Solution:</span>
+                        <p className="text-slate-600 text-[11px] leading-relaxed">{currentTechEval.betterAnswer}</p>
+                      </div>
+                    )}
+
+                    <div className="pt-3 border-t border-slate-100 flex items-center justify-end">
+                      {currentTechIdx < techQuestions.length - 1 ? (
+                        <button
+                          onClick={handleNextTechQuestion}
+                          className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <span>Next Technical Question</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                      ) : (
+                        <button
+                          disabled={completingTech}
+                          onClick={handleCompleteTechnicalSession}
+                          className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer disabled:opacity-50"
+                        >
+                          {completingTech ? <Sparkles className="w-3.5 h-3.5 animate-spin" /> : null}
+                          <span>Finalize Technical Round</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -1151,8 +1236,22 @@ export default function InterviewCenterPage() {
               </button>
             </div>
           ) : (
-            /* ACTIVE REAL-TIME GEMINI LIVE SESSION */
-            <div className="space-y-6 max-w-3xl mx-auto">
+            /* ACTIVE REAL-TIME GEMINI LIVE SESSION WITH AI VIDEO STAGE */
+            <div className="space-y-6 max-w-4xl mx-auto">
+              {/* Dual-Pane Video Stage: Left AI HR Interviewer (robot.jpeg), Right Candidate Camera */}
+              <AIInterviewVideoStage
+                company={targetCompany}
+                role={targetRole}
+                roundTitle="Round 3 &bull; HR & Behavioral Round"
+                interviewerRole={`${targetCompany} HR & People Operations`}
+                isAiSpeaking={isAiSpeaking}
+                cameraActive={cameraActive}
+                cameraError={cameraError}
+                stream={cameraStream}
+                onToggleCamera={toggleCamera}
+                candidateName={user?.name || profile?.name || 'Candidate'}
+              />
+
               {/* Studio Header & Media Controls */}
               <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-slate-900 text-white rounded-2xl shadow-md">
                 <div className="flex items-center gap-2.5">
@@ -1169,22 +1268,10 @@ export default function InterviewCenterPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {/* Camera Toggle */}
-                  <button
-                    onClick={toggleCamera}
-                    className={`p-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
-                      cameraActive ? 'bg-indigo-600 text-white' : 'bg-white/10 hover:bg-white/20 text-slate-300'
-                    }`}
-                    title={cameraActive ? 'Turn off camera' : 'Turn on camera'}
-                  >
-                    {cameraActive ? <Video className="w-3.5 h-3.5" /> : <VideoOff className="w-3.5 h-3.5" />}
-                    <span className="hidden sm:inline">{cameraActive ? 'Camera On' : 'Camera Off'}</span>
-                  </button>
-
                   {/* Audio Mute Toggle */}
                   <button
                     onClick={() => setAudioMuted(!audioMuted)}
-                    className="p-2 bg-white/10 hover:bg-white/20 rounded-xl text-slate-300 transition"
+                    className="p-2 bg-white/10 hover:bg-white/20 rounded-xl text-slate-300 transition cursor-pointer"
                     title={audioMuted ? 'Unmute AI voice' : 'Mute AI voice'}
                   >
                     {audioMuted ? <VolumeX className="w-3.5 h-3.5 text-rose-400" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-400" />}
@@ -1194,29 +1281,13 @@ export default function InterviewCenterPage() {
                   <button
                     disabled={completingHr}
                     onClick={handleCompleteHRAndReport}
-                    className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1 shadow-xs"
+                    className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1 shadow-xs cursor-pointer"
                   >
                     {completingHr ? <Sparkles className="w-3.5 h-3.5 animate-spin" /> : null}
                     <span>Finish Interview</span>
                   </button>
                 </div>
               </div>
-
-              {/* Video PIP if camera active */}
-              {cameraActive && (
-                <div className="relative w-48 h-36 mx-auto rounded-2xl overflow-hidden border-2 border-indigo-500 shadow-lg bg-black">
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    className="w-full h-full object-cover mirror"
-                  />
-                  <span className="absolute bottom-1 left-2 text-[9px] bg-black/70 text-white px-1.5 py-0.5 rounded font-medium">
-                    You (Live)
-                  </span>
-                </div>
-              )}
 
               {/* Real-time AI Status Indicator */}
               <div className="text-center">

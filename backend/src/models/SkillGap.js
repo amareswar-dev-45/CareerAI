@@ -24,7 +24,7 @@ const SkillGapSchema = new mongoose.Schema({
   skillsBreakdown: [{
     skill: String,
     level: Number,
-    status: { type: String, enum: ['Present', 'Partial', 'Missing'], default: 'Present' },
+    status: { type: String, default: 'Present' },
     evidence: String
   }],
   requiredSkills: [{ type: String }],

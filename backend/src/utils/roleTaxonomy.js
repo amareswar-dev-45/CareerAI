@@ -264,9 +264,10 @@ function findRoleRequirements(targetRole = '') {
  * Calculates genuine Skill Gap by comparing user's extracted resume skills vs role requirements.
  * Guarantees zero fake data, dynamic percentage, and standardized normalization.
  */
-function calculateRealSkillGap(rawResumeSkills = [], targetRole = 'Software Engineer', resumeFileName = 'resume.pdf') {
+function calculateRealSkillGap(rawResumeSkills = [], targetRole = 'Software Engineer', resumeFileName = 'resume.pdf', hasResume = true) {
   const roleReq = findRoleRequirements(targetRole);
-  const normalizedUserSkills = Array.from(new Set(rawResumeSkills.map(normalizeSkill).filter(Boolean)));
+  const isNoResume = hasResume === false || (rawResumeSkills.length === 0 && (resumeFileName === 'No Resume' || resumeFileName === 'none'));
+  const normalizedUserSkills = isNoResume ? [] : Array.from(new Set(rawResumeSkills.map(normalizeSkill).filter(Boolean)));
   
   // Set of user skills for case-insensitive lookup
   const userSkillMap = new Map();
@@ -299,7 +300,7 @@ function isSkillMatch(skillA, skillB) {
 
   roleReq.requiredSkills.forEach(reqSkill => {
     const normReq = normalizeSkill(reqSkill);
-    const hasMatch = normalizedUserSkills.some(uSkill => isSkillMatch(uSkill, normReq));
+    const hasMatch = !isNoResume && normalizedUserSkills.some(uSkill => isSkillMatch(uSkill, normReq));
     if (hasMatch) {
       matchedRequired.push(normReq);
     } else {
@@ -309,20 +310,25 @@ function isSkillMatch(skillA, skillB) {
 
   // Calculate dynamic skill match percentage based on real comparison
   const totalRequired = Math.max(roleReq.requiredSkills.length, 1);
-  const skillMatchPercentage = Math.round((matchedRequired.length / totalRequired) * 100);
+  const skillMatchPercentage = isNoResume ? 0 : Math.round((matchedRequired.length / totalRequired) * 100);
 
   // Build Skills You Already Have (present in resume)
-  const skillsYouHave = normalizedUserSkills.length > 0 ? normalizedUserSkills : matchedRequired;
+  const skillsYouHave = isNoResume ? [] : (normalizedUserSkills.length > 0 ? normalizedUserSkills : matchedRequired);
 
   // Build Skills You Need to Improve (actual missing skills)
+  const missingStatus = isNoResume ? 'Not provided / Not verified' : 'Missing from resume';
   const skillsToImprove = missingRequired.map(skill => {
     const meta = roleReq.importanceMap[skill] || {};
     return {
       skill,
-      status: 'Missing',
+      status: missingStatus,
       importance: meta.importance || 'High',
-      reason: meta.reason || `Essential core competency required for ${roleReq.role}.`,
-      action: `Study fundamentals and build a mini-project applying ${skill}.`
+      reason: isNoResume 
+        ? `Expected for ${roleReq.role}. Not provided / Missing from current profile.`
+        : (meta.reason || `Essential core competency required for ${roleReq.role}.`),
+      action: isNoResume
+        ? `Add verified project or coursework evidence for ${skill}.`
+        : `Study fundamentals and build a mini-project applying ${skill}.`
     };
   });
 
@@ -337,18 +343,27 @@ function isSkillMatch(skillA, skillB) {
     const meta = roleReq.importanceMap[skill] || {};
     skillsToImprove.push({
       skill,
-      status: 'Missing',
+      status: missingStatus,
       importance: meta.importance || 'Medium',
-      reason: meta.reason || `Recommended supporting skill for ${roleReq.role}.`,
+      reason: isNoResume
+        ? `Recommended supporting skill for ${roleReq.role}. Not provided in profile.`
+        : (meta.reason || `Recommended supporting skill for ${roleReq.role}.`),
       action: `Learn key concepts to strengthen overall market competitiveness.`
     });
   });
 
   // Skills breakdown for progress bars
-  const skillsBreakdown = [
-    ...matchedRequired.map(s => ({ skill: s, level: 85, status: 'Present', evidence: 'Detected in verified resume' })),
-    ...missingRequired.map(s => ({ skill: s, level: 20, status: 'Missing', evidence: 'Not detected in uploaded resume' }))
-  ];
+  const skillsBreakdown = isNoResume
+    ? roleReq.requiredSkills.map(s => ({
+        skill: s,
+        level: 0,
+        status: 'Not provided / Not verified',
+        evidence: 'Not provided / Not verified'
+      }))
+    : [
+        ...matchedRequired.map(s => ({ skill: s, level: 85, status: 'Present', evidence: 'Detected in verified resume' })),
+        ...missingRequired.map(s => ({ skill: s, level: 20, status: 'Missing', evidence: 'Not detected in uploaded resume' }))
+      ];
 
   // Priority action items
   const prioritySkills = skillsToImprove.slice(0, 4).map(item => ({

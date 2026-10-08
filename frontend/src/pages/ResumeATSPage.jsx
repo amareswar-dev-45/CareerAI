@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   Upload, 
   FileText, 
@@ -21,6 +22,7 @@ import { useCareer } from '../context/CareerContext';
 import API from '../services/api';
 
 export default function ResumeATSPage() {
+  const navigate = useNavigate();
   const { resumeData, setResumeData, atsAnalysis, setAtsAnalysis, profile } = useCareer();
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
@@ -50,31 +52,36 @@ export default function ResumeATSPage() {
     }
   };
 
+  const hasResume = Boolean(resumeData && (resumeData.extractedText || resumeData.fileName !== 'No Resume') && profile?.resumeStatus !== 'skipped');
   const ats = atsAnalysis || resumeData?.atsAnalysis || {};
   const currentRole = ats.targetRole || profile?.targetRole || 'Software Engineer';
-  const atsScore = typeof ats.atsScore === 'number' ? ats.atsScore : (typeof ats.score === 'number' ? ats.score : 75);
+  const atsScore = hasResume
+    ? (typeof ats.atsScore === 'number' ? ats.atsScore : (typeof ats.score === 'number' ? ats.score : 75))
+    : 0;
 
   const requiredSkills = ats.requiredSkills || ['React', 'JavaScript', 'Node.js', 'Express', 'MongoDB', 'REST API', 'Git'];
-  const skillsFound = ats.skillsFound || resumeData?.parsedData?.skills || ['JavaScript', 'React', 'HTML', 'CSS', 'Git'];
+  const skillsFound = hasResume ? (ats.skillsFound || resumeData?.parsedData?.skills || ['JavaScript', 'React', 'HTML', 'CSS', 'Git']) : [];
   const missingSkills = ats.missingSkills || requiredSkills.filter(s => !skillsFound.some(sf => sf.toLowerCase() === s.toLowerCase()));
   const missingKeywords = ats.missingKeywords || missingSkills;
 
-  const strengths = ats.strengths && ats.strengths.length > 0 ? ats.strengths : [
-    'Clean formatting and identifiable contact sections',
-    'Demonstrated core proficiency in modern web development frameworks'
+  const strengths = hasResume && ats.strengths && ats.strengths.length > 0 ? ats.strengths : [
+    `Profile registered for target role: ${currentRole}`,
+    'Target company and academic prerequisites configured'
   ];
 
-  const improvements = ats.improvements && ats.improvements.length > 0 ? ats.improvements : [
-    'Add measurable metrics and percentages to project bullet points',
-    'Incorporate industry keywords aligned with ' + currentRole
+  const improvements = hasResume && ats.improvements && ats.improvements.length > 0 ? ats.improvements : [
+    'No resume available for analysis. Upload or build a resume to evaluate strengths and gaps.',
+    'Add verified technical projects to demonstrate hands-on competency'
   ];
 
-  const suggestedImprovements = ats.suggestedImprovements && ats.suggestedImprovements.length > 0 ? ats.suggestedImprovements : [
-    'Use standard reverse-chronological layout for best ATS parser compatibility',
-    'Highlight quantifiable achievements in project descriptions (e.g., "reduced latency by 25%")'
+  const suggestedImprovements = hasResume && ats.suggestedImprovements && ats.suggestedImprovements.length > 0 ? ats.suggestedImprovements : [
+    'Use Resume Builder or upload a PDF resume to generate tailored ATS keyword matches.',
+    'Include quantifiable achievements and specific frameworks matching ' + currentRole
   ];
 
-  const relevantExperience = ats.relevantExperience || 'Relevant academic and personal software engineering projects listed';
+  const relevantExperience = hasResume 
+    ? (ats.relevantExperience || 'Relevant academic and personal software engineering projects listed')
+    : 'No resume evidence currently available';
   const educationMatch = ats.educationMatch || 'Degree matches standard target role technical requirements';
 
   return (
@@ -83,34 +90,66 @@ export default function ResumeATSPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-xl font-bold text-slate-900">ATS Resume Evaluation</h2>
+            <h2 className="text-xl font-bold text-slate-900">Estimated ATS Readiness</h2>
             <span className="text-xs bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full font-bold border border-indigo-200">
               Role: {currentRole}
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Real ATS scan and semantic skill analysis generated from your uploaded resume against target role.
+            Real ATS scan and semantic skill analysis evaluated against target role requirements.
           </p>
         </div>
       </div>
+
+      {/* No-Resume Notice Banner if user has skipped or has no resume */}
+      {!hasResume && (
+        <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fadeIn">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div className="space-y-0.5">
+              <h4 className="text-xs font-bold text-amber-900">
+                No resume available for analysis.
+              </h4>
+              <p className="text-[11px] text-amber-800/90 leading-relaxed">
+                No resume evidence is currently available. Your score is 0/100 because no resume document has been uploaded or built yet — this reflects missing documentation, not your actual skills or potential.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={() => navigate('/resume-builder')}
+              className="flex-1 sm:flex-none px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Create Resume</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Top ATS Score Summary Grid */}
       <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
         {/* Score Dial */}
         <div className="md:col-span-4 flex flex-col items-center justify-center p-4 border-r border-slate-100 text-center">
-          <ScoreGauge value={atsScore} size={150} color={atsScore >= 75 ? '#10B981' : (atsScore >= 55 ? '#F59E0B' : '#EF4444')} />
+          <ScoreGauge value={atsScore} size={150} color={atsScore >= 75 ? '#10B981' : (atsScore >= 55 ? '#F59E0B' : (!hasResume ? '#94A3B8' : '#EF4444'))} />
           <div className="mt-3">
             <span className="text-2xl font-black text-slate-900">{atsScore}</span>
             <span className="text-xs text-slate-400 font-bold">/100</span>
           </div>
           <span className={`mt-1 text-xs font-bold px-3 py-1 rounded-full border ${
-            atsScore >= 75 
+            !hasResume
+              ? 'text-slate-600 bg-slate-100 border-slate-200'
+              : atsScore >= 75 
               ? 'text-emerald-700 bg-emerald-50 border-emerald-200' 
               : atsScore >= 55 
               ? 'text-amber-700 bg-amber-50 border-amber-200' 
               : 'text-red-700 bg-red-50 border-red-200'
           }`}>
-            {atsScore >= 75 ? 'Strong ATS Readiness' : (atsScore >= 55 ? 'Moderate Match' : 'Needs Optimization')}
+            {!hasResume ? 'Estimated ATS Readiness: 0/100' : (atsScore >= 75 ? 'Strong ATS Readiness' : (atsScore >= 55 ? 'Moderate Match' : 'Needs Optimization'))}
           </span>
         </div>
 
@@ -354,11 +393,17 @@ export default function ResumeATSPage() {
             <FileText className="w-5 h-5" />
           </div>
           <div>
-            <p className="font-bold text-slate-800">{resumeData?.fileName || 'Uploaded_Resume.pdf'}</p>
-            <p className="text-slate-400">Target Role: {currentRole} • Analyzed with Groq AI</p>
+            <p className="font-bold text-slate-800">
+              {hasResume ? (resumeData?.fileName || 'Uploaded_Resume.pdf') : 'No Active Resume Document'}
+            </p>
+            <p className="text-slate-400">
+              Target Role: {currentRole} • {hasResume ? 'Analyzed with Groq AI' : 'Awaiting upload or builder submission'}
+            </p>
           </div>
         </div>
-        <span className="text-slate-500 font-medium">Verified Active Document</span>
+        <span className={hasResume ? "text-slate-500 font-medium" : "text-amber-600 font-medium"}>
+          {hasResume ? "Verified Active Document" : "Pending Document"}
+        </span>
       </div>
     </div>
   );
