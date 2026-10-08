@@ -220,65 +220,21 @@ Output valid JSON matching this schema:
     let rounds = Array.isArray(aiRes?.rounds) && aiRes.rounds.length > 0 ? aiRes.rounds : [];
 
     if (rounds.length === 0) {
-      // Sensible industry-standard flow with transparent attribution
-      const isServiceBased = /tcs|infosys|wipro|cognizant|accenture|capgemini|hcl|tech mahindra/i.test(cleanCompany);
-      if (isServiceBased) {
-        rounds = [
-          {
-            roundKey: 'aptitude',
-            roundNumber: 1,
-            name: 'Online Aptitude & Cognitive Assessment',
-            description: 'Timed assessment evaluating numerical ability, logical reasoning, and verbal aptitude.',
-            evidenceType: 'Based on multiple public sources',
-            durationMinutes: 15,
-            reportedTopics: ['Quantitative Aptitude', 'Logical Reasoning', 'Verbal Ability'],
-            passThreshold: 60
-          },
-          {
-            roundKey: 'technical',
-            roundNumber: 2,
-            name: 'Technical Competency Interview',
-            description: 'Interactive technical interview assessing programming fundamentals, DBMS, and core concepts.',
-            evidenceType: 'Reported by candidates',
-            durationMinutes: 25,
-            reportedTopics: ['OOP & Programming', 'SQL & DBMS', 'Data Structures', 'Problem Solving'],
-            passThreshold: 60
-          },
-          {
-            roundKey: 'hr',
-            roundNumber: 3,
-            name: 'HR & Behavioral Evaluation (Gemini Live)',
-            description: 'Real-time conversational interview evaluating cultural fit, motivation, and communication.',
-            evidenceType: 'Reported by candidates',
-            durationMinutes: 15,
-            reportedTopics: ['Why ' + cleanCompany, 'Project Walkthrough', 'Situational Scenarios', 'Relocation'],
-            passThreshold: 60
-          }
-        ];
-      } else {
-        rounds = [
-          {
-            roundKey: 'technical',
-            roundNumber: 1,
-            name: 'Technical & System Architecture Interview',
-            description: 'Deep dive into data structures, technical design, and core programming skills.',
-            evidenceType: 'Reported by candidates',
-            durationMinutes: 30,
-            reportedTopics: ['Algorithms', 'System Design', 'Core Frameworks', 'Code Quality'],
-            passThreshold: 60
-          },
-          {
-            roundKey: 'hr',
-            roundNumber: 2,
-            name: 'HR, Behavioral & Cultural Fit (Gemini Live)',
-            description: 'Interactive real-time interview evaluating collaboration, leadership principles, and motivation.',
-            evidenceType: 'Reported by candidates',
-            durationMinutes: 20,
-            reportedTopics: ['Leadership Principles', 'Conflict Resolution', 'Company Mission', 'Career Goals'],
-            passThreshold: 60
-          }
-        ];
-      }
+      rounds = this.buildDynamicRounds(cleanCompany, cleanRole);
+    } else {
+      // Ensure all rounds have required properties
+      rounds = rounds.map((r, i) => ({
+        roundKey: r.roundKey || (i === 0 ? 'aptitude' : i === 1 ? 'technical' : 'hr'),
+        roundNumber: r.roundNumber || (i + 1),
+        name: r.name || `Round ${i + 1}`,
+        description: r.description || `Assessment round for ${cleanRole}`,
+        roundType: r.roundType || (r.roundKey === 'aptitude' ? 'aptitude' : r.roundKey === 'hr' ? 'hr' : 'technical'),
+        evidenceType: r.evidenceType || 'Reported by candidates',
+        durationMinutes: r.durationMinutes || (r.roundKey === 'technical' ? 25 : 15),
+        questionCount: r.questionCount || (r.roundKey === 'technical' ? 5 : 10),
+        reportedTopics: Array.isArray(r.reportedTopics) ? r.reportedTopics : this.getRoleDefaultTopics(cleanRole, r.roundKey),
+        passThreshold: r.passThreshold || 60
+      }));
     }
 
     const planData = {
@@ -288,14 +244,14 @@ Output valid JSON matching this schema:
       normalizedRole: normRole,
       difficulty: aiRes?.difficulty || 'Medium',
       rounds,
-      summary: aiRes?.summary || `Researched ${rounds.length}-stage interview process for ${cleanCompany} (${cleanRole}).`,
+      summary: aiRes?.summary || `Researched ${rounds.length}-stage tailored interview process for ${cleanCompany} (${cleanRole}).`,
       frequentlyAskedTopics: Array.isArray(aiRes?.frequentlyAskedTopics) && aiRes.frequentlyAskedTopics.length > 0
         ? aiRes.frequentlyAskedTopics
-        : ['Technical Fundamentals', 'Problem Solving', 'Behavioral Alignment'],
-      candidateExperience: aiRes?.candidateExperience || 'Candidate reports indicate a structured and thorough evaluation process.',
+        : this.getRoleDefaultTopics(cleanRole, 'all'),
+      candidateExperience: aiRes?.candidateExperience || 'Structured evaluation focusing on role-specific competency and technical execution.',
       sourceAttribution: allSnippets.length > 0 
-        ? `Based on ${allSnippets.length} public candidate reports & career platforms` 
-        : 'Limited public interview data is available for this company and role.',
+        ? `Based on ${allSnippets.length} public candidate reports & verified hiring patterns` 
+        : 'AI-generated based on hiring patterns (no verified official claim made).',
       sources: allSnippets.slice(0, 6).map(s => ({
         title: s.title,
         url: s.url,
@@ -318,6 +274,233 @@ Output valid JSON matching this schema:
     }
 
     return planData;
+  }
+
+  // Helper: Default topics per role and round
+  getRoleDefaultTopics(role = '', roundKey = 'technical') {
+    const r = role.toLowerCase();
+    if (r.includes('data analyst') || r.includes('business analyst') || r.includes('data science')) {
+      if (roundKey === 'aptitude') return ['Data Interpretation', 'Quantitative Aptitude', 'Logical Deduction', 'Basic Probability'];
+      if (roundKey === 'hr') return ['Business Communication', 'Stakeholder Management', 'Analytics Projects', 'Why Analytics'];
+      return ['SQL Queries & Joins', 'Excel & Pivot Tables', 'Statistics & A/B Testing', 'Python / Pandas', 'Data Cleaning & ETL'];
+    }
+    if (r.includes('mern') || r.includes('full stack') || r.includes('react') || r.includes('frontend') || r.includes('node') || r.includes('web')) {
+      if (roundKey === 'aptitude') return ['Logic & Pseudocode', 'Numerical Ability', 'Verbal Reasoning'];
+      if (roundKey === 'hr') return ['Team Collaboration', 'Agile & Sprints', 'Project Challenges', 'Career Growth'];
+      return ['JavaScript & ES6+', 'React Hooks & State', 'Node.js & Express', 'MongoDB & Aggregation', 'REST APIs & Auth'];
+    }
+    if (r.includes('devops') || r.includes('cloud')) {
+      return ['Docker & Kubernetes', 'CI/CD Pipelines', 'Linux & Networking', 'AWS/Cloud Infrastructure', 'Terraform & IaC'];
+    }
+    if (r.includes('qa') || r.includes('test')) {
+      return ['Manual Testing & Bug Life Cycle', 'Selenium / Cypress', 'API Testing (Postman)', 'Test Case Design', 'CI/CD Integration'];
+    }
+    // Standard SDE / Software Engineer
+    if (roundKey === 'aptitude') return ['Quantitative Aptitude', 'Logical Reasoning', 'Verbal Ability', 'Technical Reasoning'];
+    if (roundKey === 'hr') return ['STAR Behavioral Scenarios', 'Why This Company', 'Project Deep-Dive', 'Team Collaboration'];
+    return ['Data Structures & Algorithms', 'Object-Oriented Programming', 'DBMS & SQL', 'Operating Systems & Concurrency', 'System Architecture'];
+  }
+
+  // Helper: Build dynamic interview rounds depending on Company + Role
+  buildDynamicRounds(companyName, targetRole) {
+    const comp = (companyName || 'TCS').trim();
+    const role = (targetRole || 'Software Engineer').trim();
+    const compLower = comp.toLowerCase();
+    const roleLower = role.toLowerCase();
+
+    const isServiceBased = /tcs|infosys|wipro|cognizant|accenture|capgemini|hcl|tech mahindra|l&t|hexaware/i.test(compLower);
+    const isBigTech = /google|microsoft|amazon|meta|apple|netflix|uber|adobe|atlassian|salesforce/i.test(compLower);
+
+    // 1. Data Analyst / Analytics
+    if (roleLower.includes('data analyst') || roleLower.includes('business analyst')) {
+      return [
+        {
+          roundKey: 'aptitude',
+          roundNumber: 1,
+          name: `${comp} Data & Quantitative Assessment`,
+          description: 'Timed assessment evaluating data interpretation, numerical reasoning, and basic statistics.',
+          roundType: 'aptitude',
+          evidenceType: isServiceBased ? 'Reported by candidates' : 'AI-generated based on hiring patterns',
+          durationMinutes: 15,
+          questionCount: 10,
+          reportedTopics: ['Data Interpretation', 'Quantitative Aptitude', 'Probability & Averages', 'Logical Deduction'],
+          passThreshold: 60
+        },
+        {
+          roundKey: 'technical',
+          roundNumber: 2,
+          name: `${role} Technical & Analytics Interview`,
+          description: `Deep dive into SQL joins, Excel functions, data wrangling with Python, and business metrics for ${comp}.`,
+          roundType: 'technical',
+          evidenceType: 'AI-generated based on hiring patterns',
+          durationMinutes: 25,
+          questionCount: 5,
+          reportedTopics: ['SQL (JOINs, GROUP BY, Window Functions)', 'Excel & Spreadsheets', 'Statistics & Hypothesis Testing', 'Python / Pandas', 'Business Case Scenarios'],
+          passThreshold: 60
+        },
+        {
+          roundKey: 'hr',
+          roundNumber: 3,
+          name: 'Managerial, Behavioral & Business Fit',
+          description: `Interactive conversational interview evaluating client communication, storytelling with data, and fit for ${comp}.`,
+          roundType: 'hr',
+          evidenceType: 'Reported by candidates',
+          durationMinutes: 15,
+          questionCount: 4,
+          reportedTopics: ['Stakeholder Communication', 'Project Walkthrough', 'Handling Missing Data', `Why ${comp}`],
+          passThreshold: 60
+        }
+      ];
+    }
+
+    // 2. MERN Stack / Full Stack Developer
+    if (roleLower.includes('mern') || roleLower.includes('full stack') || roleLower.includes('web developer')) {
+      const rounds = [];
+      let roundNum = 1;
+
+      if (isServiceBased) {
+        rounds.push({
+          roundKey: 'aptitude',
+          roundNumber: roundNum++,
+          name: `${comp} Foundation & Cognitive Assessment`,
+          description: 'Timed evaluation of logical reasoning, numerical aptitude, and pseudocode.',
+          roundType: 'aptitude',
+          evidenceType: 'Reported by candidates',
+          durationMinutes: 15,
+          questionCount: 10,
+          reportedTopics: ['Quantitative Ability', 'Logical Reasoning', 'Pseudocode / Logic'],
+          passThreshold: 60
+        });
+      }
+
+      rounds.push({
+        roundKey: 'technical',
+        roundNumber: roundNum++,
+        name: `MERN & Full Stack Architecture Interview`,
+        description: `Comprehensive interview covering React internals, Node.js event loop, Express middleware, and MongoDB document modeling.`,
+        roundType: 'technical',
+        evidenceType: 'AI-generated based on hiring patterns',
+        durationMinutes: 30,
+        questionCount: 5,
+        reportedTopics: ['JavaScript & Async / Event Loop', 'React Hooks & State Management', 'Node.js & Express REST APIs', 'MongoDB Schema & Indexes', 'JWT Authentication & Security'],
+        passThreshold: 60
+      });
+
+      rounds.push({
+        roundKey: 'hr',
+        roundNumber: roundNum++,
+        name: 'HR & Cultural Alignment (Gemini Live)',
+        description: `Interactive conversational evaluation of team collaboration, agile execution, and career aspirations at ${comp}.`,
+        roundType: 'hr',
+        evidenceType: 'Reported by candidates',
+        durationMinutes: 15,
+        questionCount: 4,
+        reportedTopics: ['Project Highlights', 'Agile & Sprint Deadlines', 'Conflict Resolution', `Why ${comp}`],
+        passThreshold: 60
+      });
+
+      return rounds;
+    }
+
+    // 3. BigTech SDE (e.g. Google, Microsoft, Amazon)
+    if (isBigTech) {
+      return [
+        {
+          roundKey: 'technical',
+          roundNumber: 1,
+          name: `${comp} Algorithms & Problem Solving Round`,
+          description: 'Deep dive into data structures, algorithm complexity, dynamic programming, and graph traversal.',
+          roundType: 'technical',
+          evidenceType: 'Reported by candidates',
+          durationMinutes: 30,
+          questionCount: 5,
+          reportedTopics: ['Data Structures (Trees, Heaps, Graphs)', 'Dynamic Programming & Recursion', 'Time & Space Complexity', 'Algorithmic Optimization'],
+          passThreshold: 65
+        },
+        {
+          roundKey: 'hr',
+          roundNumber: 2,
+          name: `${comp} Behavioral & Leadership Principles`,
+          description: `Conversational interview evaluating cultural tenets, ownership, dealing with ambiguity, and technical trade-offs.`,
+          roundType: 'hr',
+          evidenceType: 'Reported by candidates',
+          durationMinutes: 20,
+          questionCount: 4,
+          reportedTopics: ['Leadership Principles / Culture Fit', 'STAR Project Scenarios', 'Dealing with Failure', 'System Ownership'],
+          passThreshold: 60
+        }
+      ];
+    }
+
+    // 4. Standard Service-Based (TCS, Infosys, Wipro, Accenture)
+    if (isServiceBased) {
+      return [
+        {
+          roundKey: 'aptitude',
+          roundNumber: 1,
+          name: `${comp} National Assessment / Aptitude Round`,
+          description: 'Timed assessment evaluating numerical ability, logical deduction, and verbal comprehension.',
+          roundType: 'aptitude',
+          evidenceType: 'Reported by candidates',
+          durationMinutes: 15,
+          questionCount: 10,
+          reportedTopics: ['Quantitative Aptitude', 'Logical Reasoning', 'Verbal Ability'],
+          passThreshold: 60
+        },
+        {
+          roundKey: 'technical',
+          roundNumber: 2,
+          name: `${comp} Technical Competency Interview`,
+          description: `Interactive technical interview assessing ${role} fundamentals, OOP, DBMS, and real-world implementation.`,
+          roundType: 'technical',
+          evidenceType: 'Reported by candidates',
+          durationMinutes: 25,
+          questionCount: 5,
+          reportedTopics: ['OOP Concepts & Programming', 'SQL & Normalization', 'Data Structures', 'Debugging & Code Flow'],
+          passThreshold: 60
+        },
+        {
+          roundKey: 'hr',
+          roundNumber: 3,
+          name: `${comp} HR & Managerial Interview`,
+          description: 'Real-time conversational interview evaluating cultural fit, motivation, relocation, and communication.',
+          roundType: 'hr',
+          evidenceType: 'Reported by candidates',
+          durationMinutes: 15,
+          questionCount: 4,
+          reportedTopics: [`Why ${comp}`, 'Final Year Projects', 'Situational & Ethical Scenarios', 'Shift & Relocation Flexibility'],
+          passThreshold: 60
+        }
+      ];
+    }
+
+    // 5. Default General Role-Specific Standard
+    return [
+      {
+        roundKey: 'technical',
+        roundNumber: 1,
+        name: `${role} Technical & Engineering Interview`,
+        description: `In-depth technical interview covering core engineering principles, ${role} competencies, and best practices.`,
+        roundType: 'technical',
+        evidenceType: 'AI-generated based on hiring patterns',
+        durationMinutes: 30,
+        questionCount: 5,
+        reportedTopics: this.getRoleDefaultTopics(role, 'technical'),
+        passThreshold: 60
+      },
+      {
+        roundKey: 'hr',
+        roundNumber: 2,
+        name: 'HR & Cultural Alignment Interview',
+        description: `Conversational interview evaluating teamwork, conflict handling, and long-term fit for ${comp}.`,
+        roundType: 'hr',
+        evidenceType: 'AI-generated based on hiring patterns',
+        durationMinutes: 15,
+        questionCount: 4,
+        reportedTopics: ['Behavioral Scenarios', 'Collaboration', 'Motivation', 'Career Goals'],
+        passThreshold: 60
+      }
+    ];
   }
 
   // =========================================================================
@@ -743,6 +926,337 @@ Return valid JSON:
     };
 
     return finalReport;
+  }
+
+  // =========================================================================
+  // STEP 8: LIVE ADAPTIVE QUESTION GENERATOR (Role + Company + History Aware)
+  // =========================================================================
+  async generateAdaptiveQuestion({
+    companyName = 'TCS',
+    targetRole = 'Software Developer',
+    roundKey = 'technical',
+    questionIndex = 0,
+    previousQuestions = [],
+    previousMistakes = [],
+    candidateLastAnswer = ''
+  }) {
+    const cleanCompany = companyName.trim();
+    const cleanRole = targetRole.trim();
+    const topics = this.getRoleDefaultTopics(cleanRole, roundKey);
+
+    const prompt = `You are a Senior Technical Interviewer conducting a real-time interview at "${cleanCompany}" for a "${cleanRole}" candidate.
+Current Round: "${roundKey}".
+Current Question Number: ${questionIndex + 1}.
+
+Role Focus Topics:
+${JSON.stringify(topics)}
+
+Previous questions asked in this session:
+${JSON.stringify(previousQuestions.map(q => q.questionText || q.question))}
+
+Candidate's latest spoken answer (if any):
+"${candidateLastAnswer ? candidateLastAnswer.slice(0, 400) : ''}"
+
+Candidate's historical weak areas / mistakes from previous interviews (re-test or probe these intelligently if applicable, without lowering difficulty):
+${JSON.stringify(previousMistakes.slice(0, 4))}
+
+INSTRUCTIONS:
+1. If the candidate just answered a question, create an ADAPTIVE FOLLOW-UP question that digs deeper into their explanation or probes a related practical trade-off.
+2. If this is question 1 or starting a new topic, ask a core foundational question specifically expected at ${cleanCompany} for ${cleanRole}.
+3. If previous mistakes include topics like "SQL JOINs" or "Normalization" or "React hooks", prioritize probing those areas to see if they have improved.
+4. Keep the question crisp, realistic, and conversational (1-2 sentences). Do NOT number the question.
+5. Provide expected key points, difficulty, and the primary topic.
+
+Return valid JSON:
+{
+  "questionText": "<Spoken question>",
+  "topic": "<Primary Topic e.g. SQL JOINs / React State>",
+  "expectedKeyPoints": ["point 1", "point 2"],
+  "difficulty": "Medium",
+  "practiceTopic": "<Topic name>"
+}`;
+
+    const systemInstruction = `You are an adaptive AI interviewer at ${cleanCompany}. Generate natural, rigorous, role-specific questions. Return valid JSON only.`;
+    const aiRes = await this.callGeminiJSON(prompt, systemInstruction);
+
+    let questionText = aiRes?.questionText;
+    let topic = aiRes?.topic || topics[questionIndex % topics.length] || 'Technical Fundamentals';
+    let expectedKeyPoints = Array.isArray(aiRes?.expectedKeyPoints) ? aiRes.expectedKeyPoints : [];
+    let difficulty = aiRes?.difficulty || 'Medium';
+    let practiceTopic = aiRes?.practiceTopic || topic;
+
+    if (!questionText) {
+      // Deterministic role-specific fallback question
+      const rLower = cleanRole.toLowerCase();
+      if (rLower.includes('data analyst')) {
+        const fallbacks = [
+          `In SQL, what is the difference between WHERE and HAVING clauses, and can you share an example of filtering aggregated sales data?`,
+          `When analyzing customer purchase data in Python or Excel, how do you handle missing or anomalous values before computing business metrics?`,
+          `Can you explain what an INNER JOIN vs a LEFT JOIN produces when joining a Customers table with an Orders table?`,
+          `How would you explain the difference between Correlation and Causation to a non-technical business stakeholder at ${cleanCompany}?`,
+          `Walk me through a project where you used SQL or visualization tools to uncover an actionable business insight.`
+        ];
+        questionText = fallbacks[questionIndex % fallbacks.length];
+        topic = 'Data Analytics & SQL';
+      } else if (rLower.includes('mern') || rLower.includes('full stack')) {
+        const fallbacks = [
+          `In React, what is the difference between useEffect and useMemo, and how do you prevent unnecessary component re-renders?`,
+          `How does the Node.js event loop handle asynchronous I/O operations without blocking incoming HTTP requests in Express?`,
+          `When designing schemas in MongoDB, when would you embed documents versus referencing them across separate collections?`,
+          `How do you securely handle user authentication and token expiration using JWT in a MERN stack application?`,
+          `Tell me about a challenging bug or performance bottleneck you resolved in your recent web project.`
+        ];
+        questionText = fallbacks[questionIndex % fallbacks.length];
+        topic = 'MERN Stack Engineering';
+      } else {
+        const fallbacks = [
+          `Explain the concept of Database Normalization and why 3NF is commonly used in relational database schema design.`,
+          `What are the key differences between a Process and a Thread, and how does inter-process communication work?`,
+          `Explain how a Hash Map handles hash collisions, and compare chaining versus open addressing in terms of time complexity.`,
+          `In Object-Oriented Programming, explain Polymorphism and provide an example of method overriding versus method overloading.`,
+          `Walk me through how you approach optimizing a slow database query in production.`
+        ];
+        questionText = fallbacks[questionIndex % fallbacks.length];
+        topic = 'Software Engineering Fundamentals';
+      }
+    }
+
+    // Synthesize spoken audio for AI interviewer
+    const audioUrl = await this.synthesizeSpeech(questionText);
+
+    return {
+      questionId: `q_${Date.now()}_${questionIndex + 1}`,
+      questionText,
+      topic,
+      expectedKeyPoints,
+      difficulty,
+      practiceTopic,
+      audioUrl
+    };
+  }
+
+  // =========================================================================
+  // STEP 9: LIVE COACH EVALUATION & CONVERSATIONAL FEEDBACK GENERATOR
+  // =========================================================================
+  async evaluateAnswerWithCoaching({
+    companyName = 'TCS',
+    targetRole = 'Software Developer',
+    roundKey = 'technical',
+    question = '',
+    answer = '',
+    previousMistakes = []
+  }) {
+    const cleanCompany = companyName.trim();
+    const cleanRole = targetRole.trim();
+    const cleanAnswer = (answer || '').trim();
+
+    if (!cleanAnswer) {
+      return {
+        score: 0,
+        isCorrect: false,
+        isPartiallyCorrect: false,
+        mistakes: ['No response provided'],
+        correctedExplanation: 'Please articulate your technical solution or reasoning clearly.',
+        spokenFeedback: "I didn't catch your response. Take your time and share your thoughts.",
+        followUpQuestion: question,
+        technicalAccuracy: 0,
+        completeness: 0,
+        communication: 0,
+        feedback: 'No response was detected.',
+        practiceTopic: 'Interview Communication'
+      };
+    }
+
+    const prompt = `You are an expert AI Interviewer and Interview Coach at "${cleanCompany}" assessing a candidate for "${cleanRole}".
+Current Round: "${roundKey}".
+Question: "${question}"
+Candidate's Spoken Answer: "${cleanAnswer}"
+
+EVALUATION & COACHING RULES:
+1. Objectively evaluate:
+   - Correctness & Technical Accuracy (0-100)
+   - Completeness & Depth (0-100)
+   - Communication, Clarity & Structure (0-100)
+   - Overall Score (0-100)
+2. Determine:
+   - isCorrect: boolean (true if largely correct, false if materially wrong or incomplete)
+   - isPartiallyCorrect: boolean (true if partially on right track but missing key elements)
+3. Identify MATERIAL MISTAKES (Priority: factually wrong > technically wrong > missing core concept > poor reasoning > very unclear communication). Do NOT nitpick minor grammar.
+   - mistakes: array of concise descriptions (e.g. ["Misunderstood the purpose of normalization", "Stated that normalization increases duplicate data"])
+4. Correct Explanation:
+   - correctedExplanation: 1-2 sentence accurate summary of the correct concept.
+5. SPOKEN COACH FEEDBACK (CRITICAL):
+   - Provide a natural, spoken feedback response (1 to 2 sentences) that acts as an encouraging but rigorous coach.
+   - If candidate was wrong or partially correct, politely explain the real concept without just saying "Wrong".
+   - Example wrong: "You're close, but the concept is actually the opposite. Normalization is used to reduce data redundancy and improve data integrity by organizing tables into related structures."
+   - Example partially correct: "That's a reasonable starting point, but be careful with saying MongoDB is simply faster than SQL. The better explanation is that MongoDB's document model fits unstructured or evolving schemas."
+   - Example good: "Solid explanation. You correctly covered the core mechanism and its trade-offs."
+6. ADAPTIVE FOLLOW-UP QUESTION:
+   - Generate a natural follow-up question based directly on what they said to test their depth or explore practical trade-offs.
+7. Recommended Practice Topic:
+   - practiceTopic: string (e.g. "SQL Normalization", "React Hooks", "Event Loop")
+
+Return valid JSON:
+{
+  "score": 75,
+  "isCorrect": true,
+  "isPartiallyCorrect": false,
+  "technicalAccuracy": 78,
+  "completeness": 70,
+  "communication": 80,
+  "mistakes": ["Point 1 if any"],
+  "correctedExplanation": "<Accurate explanation of the concept>",
+  "spokenFeedback": "<Natural conversational spoken coach feedback>",
+  "followUpQuestion": "<Relevant follow-up question to ask next>",
+  "strengths": ["Clear definition", "Good real-world example"],
+  "improvements": ["Elaborate on performance trade-offs"],
+  "practiceTopic": "<Topic for future revision>"
+}`;
+
+    const systemInstruction = `You are a real-time AI Interview Coach. Return valid JSON only with constructive, actionable corrective coaching.`;
+    const aiRes = await this.callGeminiJSON(prompt, systemInstruction);
+
+    const score = Math.min(100, Math.max(0, Number(aiRes?.score) || (cleanAnswer.length > 50 ? 70 : 40)));
+    const isCorrect = aiRes?.isCorrect !== undefined ? Boolean(aiRes.isCorrect) : score >= 65;
+    const isPartiallyCorrect = aiRes?.isPartiallyCorrect !== undefined ? Boolean(aiRes.isPartiallyCorrect) : (score >= 40 && score < 65);
+    const mistakes = Array.isArray(aiRes?.mistakes) ? aiRes.mistakes : (!isCorrect ? ['Incomplete or partially inaccurate technical reasoning'] : []);
+    const correctedExplanation = aiRes?.correctedExplanation || 'Review standard system architecture and core computer science definitions.';
+    const spokenFeedback = aiRes?.spokenFeedback || (isCorrect ? 'Good explanation. Let us explore this a bit further.' : 'That is an interesting thought, but let us refine that concept. Consider the foundational trade-offs.');
+    const followUpQuestion = aiRes?.followUpQuestion || `Can you expand on how you would implement this in a production project at ${cleanCompany}?`;
+    const practiceTopic = aiRes?.practiceTopic || 'Technical Fundamentals';
+
+    // Synthesize audio of feedback + follow-up for natural voice flow
+    const audioUrl = await this.synthesizeSpeech(`${spokenFeedback} ${followUpQuestion}`);
+
+    return {
+      score,
+      isCorrect,
+      isPartiallyCorrect,
+      technicalAccuracy: Number(aiRes?.technicalAccuracy) || score,
+      completeness: Number(aiRes?.completeness) || score,
+      communication: Number(aiRes?.communication) || score,
+      mistakes,
+      correctedExplanation,
+      spokenFeedback,
+      followUpQuestion,
+      feedback: spokenFeedback,
+      strengths: Array.isArray(aiRes?.strengths) ? aiRes.strengths : ['Articulated answer promptly'],
+      improvements: Array.isArray(aiRes?.improvements) ? aiRes.improvements : ['Deepen technical precision with concrete examples'],
+      practiceTopic,
+      audioUrl
+    };
+  }
+
+  // =========================================================================
+  // STEP 10: PRACTICE WEAK AREAS GENERATOR (AI Coach Mode)
+  // =========================================================================
+  async generatePracticeQuestions({
+    weakTopics = [],
+    mistakes = [],
+    targetRole = 'Software Developer',
+    companyName = 'TCS'
+  }) {
+    const cleanCompany = companyName.trim();
+    const cleanRole = targetRole.trim();
+
+    const prompt = `Generate 4 focused practice interview questions targeting the candidate's recorded weak areas and previous mistakes.
+Company: "${cleanCompany}"
+Target Role: "${cleanRole}"
+
+Recorded Weak Topics:
+${JSON.stringify(weakTopics)}
+
+Previous Specific Mistakes / Confusion:
+${JSON.stringify(mistakes.slice(0, 6))}
+
+INSTRUCTIONS:
+1. Create 4 questions directly challenging the concepts they struggled with (e.g. if they confused Normalization, ask a question to test 1NF, 2NF, 3NF; if they struggled with SQL JOINs, ask a multi-table query question).
+2. For each question, provide:
+   - id: unique id
+   - topic: the specific topic being practiced
+   - questionText: clear question
+   - hint: helpful coach hint
+   - idealAnswer: concise ideal response demonstrating mastery
+   - keyConceptsToInclude: list of terms/principles they must include
+
+Return valid JSON:
+{
+  "questions": [
+    {
+      "id": "prac_1",
+      "topic": "Topic Name",
+      "questionText": "Question text...",
+      "hint": "Think about...",
+      "idealAnswer": "Ideal answer...",
+      "keyConceptsToInclude": ["concept 1", "concept 2"]
+    }
+  ]
+}`;
+
+    const systemInstruction = `You are an AI Interview Coach building tailored remediation practice. Return valid JSON only.`;
+    const aiRes = await this.callGeminiJSON(prompt, systemInstruction);
+
+    if (aiRes && Array.isArray(aiRes.questions) && aiRes.questions.length >= 2) {
+      return aiRes.questions.slice(0, 4);
+    }
+
+    // High quality deterministic fallback based on role
+    const rLower = cleanRole.toLowerCase();
+    if (rLower.includes('data analyst')) {
+      return [
+        {
+          id: 'prac_1',
+          topic: 'SQL JOINs & Aggregation',
+          questionText: `Write or explain a SQL query that retrieves each customer's name along with their total order amount, including customers who haven't placed any orders yet.`,
+          hint: 'Use a LEFT JOIN between Customers and Orders, then GROUP BY customer_id with COALESCE(SUM(amount), 0).',
+          idealAnswer: 'SELECT c.customer_name, COALESCE(SUM(o.amount), 0) AS total_spent FROM Customers c LEFT JOIN Orders o ON c.id = o.customer_id GROUP BY c.id, c.customer_name;',
+          keyConceptsToInclude: ['LEFT JOIN', 'GROUP BY', 'COALESCE / NULL handling']
+        },
+        {
+          id: 'prac_2',
+          topic: 'Database Normalization',
+          questionText: `Explain 1NF, 2NF, and 3NF using a practical example of an E-commerce order database. Why would you ever choose to denormalize?`,
+          hint: '1NF: Atomic values; 2NF: No partial dependency; 3NF: No transitive dependency. Denormalization is chosen for read-heavy query performance.',
+          idealAnswer: '1NF ensures atomic columns and unique rows. 2NF removes partial key dependencies in composite keys. 3NF removes transitive dependencies where non-key attributes depend on other non-key attributes.',
+          keyConceptsToInclude: ['Atomicity', 'Partial dependency', 'Transitive dependency', 'Read optimization']
+        },
+        {
+          id: 'prac_3',
+          topic: 'Statistics & Data Interpretation',
+          questionText: `What is the difference between Mean, Median, and Mode, and when is Median preferable over Mean when analyzing salary distributions?`,
+          hint: 'Median is robust against extreme outliers / skewed distributions.',
+          idealAnswer: 'The median represents the 50th percentile. When data contains extreme positive or negative outliers—such as billionaire salaries—the mean becomes heavily distorted, whereas the median remains stable.',
+          keyConceptsToInclude: ['Outliers', 'Skewness', '50th percentile']
+        }
+      ];
+    }
+
+    return [
+      {
+        id: 'prac_1',
+        topic: 'Database Normalization & Indexing',
+        questionText: `Explain why database normalization reduces redundancy and improves data integrity, and what trade-off occurs with query join performance.`,
+        hint: 'Normalization separates concerns into related tables, which requires multi-table JOINs during complex reads.',
+        idealAnswer: 'Normalization organizes tables to eliminate duplicate data and insertion/update anomalies. The primary trade-off is that read queries often require multi-table JOINs, which can be optimized via foreign key indexes.',
+        keyConceptsToInclude: ['Data integrity', 'Anomalies', 'JOIN overhead', 'Foreign key indexing']
+      },
+      {
+        id: 'prac_2',
+        topic: 'Asynchronous Architecture & Concurrency',
+        questionText: `How does asynchronous non-blocking I/O prevent thread pool starvation in high-throughput web servers?`,
+        hint: 'Explain the event loop model versus traditional thread-per-request blocking.',
+        idealAnswer: 'In non-blocking I/O, network and disk requests are handed off to the OS kernel or thread pool, freeing the main execution loop to handle thousands of concurrent client connections without blocking on I/O wait.',
+        keyConceptsToInclude: ['Event Loop', 'Non-blocking I/O', 'Thread starvation', 'Kernel async notifications']
+      },
+      {
+        id: 'prac_3',
+        topic: 'Data Structures & Algorithmic Complexity',
+        questionText: `Compare the time and space complexity of searching, inserting, and deleting items in a Hash Map versus a Balanced Binary Search Tree (AVL/Red-Black).`,
+        hint: 'Hash Map: average O(1) vs worst O(N). Balanced BST: guaranteed O(log N).',
+        idealAnswer: 'Hash Maps offer average O(1) time complexity for lookup and insert, but can degrade to O(N) on excessive hash collisions. Balanced BSTs guarantee O(log N) worst-case time and maintain elements in sorted order.',
+        keyConceptsToInclude: ['O(1) average', 'O(log N) worst-case', 'Ordered traversal', 'Hash collision']
+      }
+    ];
   }
 }
 

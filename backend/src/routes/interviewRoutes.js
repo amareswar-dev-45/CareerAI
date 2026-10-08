@@ -35,5 +35,18 @@ router.post('/hr/complete', interviewController.completeHR);
 // 5. Final Report & History
 router.post('/final-report', interviewController.generateFinalReport);
 router.get('/history', interviewController.getInterviewHistory);
+router.get('/history/:sessionId', interviewController.getSessionReport);
+
+// 6. Production Unified Live Interview Session Engine
+router.post('/session/start', interviewController.startLiveSession);
+router.post('/session/next-question', interviewController.getNextLiveQuestion);
+router.post('/session/evaluate-answer', interviewController.evaluateLiveAnswer);
+router.post('/session/complete-round', interviewController.completeLiveRound);
+router.post('/session/complete-interview', interviewController.completeLiveInterview);
+
+// 7. Practice Weak Areas & Remediation
+router.post('/practice-weak-areas', interviewController.getPracticeWeakAreas);
+router.post('/evaluate-practice-answer', interviewController.evaluatePracticeAnswer);
 
 module.exports = router;
+
