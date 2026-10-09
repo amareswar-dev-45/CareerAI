@@ -68,8 +68,8 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = env.PORT || 5000;
-const server = app.listen(PORT, () => {
-  console.log(`[CareerAI Backend Server] running on http://localhost:${PORT}`);
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`[CareerAI Backend Server] running on http://0.0.0.0:${PORT}`);
 });
 
 server.on('error', (err) => {

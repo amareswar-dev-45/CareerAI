@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "description": "AI-Driven Career Intelligence & Employment Management Platform",
   "scripts": {
+    "build": "cd backend && npm install",
+    "start": "cd backend && npm start",
     "start:backend": "cd backend && npm start",
     "dev:backend": "cd backend && npm run dev",
     "dev:frontend": "cd frontend && npm run dev",
