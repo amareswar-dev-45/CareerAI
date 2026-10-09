@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const env = require('../config/env');
 const User = require('../models/User');
 const CandidateProfile = require('../models/CandidateProfile');
