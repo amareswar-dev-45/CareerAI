@@ -1,7 +1,12 @@
 import axios from 'axios';
 
+const rawBaseUrl = import.meta.env.VITE_API_URL || 'https://careerai-3z6c.onrender.com';
+const baseURL = rawBaseUrl.endsWith('/api/v1')
+  ? rawBaseUrl
+  : `${rawBaseUrl.replace(/\/$/, '')}/api/v1`;
+
 const API = axios.create({
-  baseURL: 'http://localhost:5000/api/v1',
+  baseURL,
   headers: {
     'Content-Type': 'application/json'
   }
