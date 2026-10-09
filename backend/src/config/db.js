@@ -3,12 +3,21 @@ const env = require('./env');
 
 const connectDB = async () => {
   try {
-    const conn = await mongoose.connect(env.MONGODB_URI);
-    console.log(`[MongoDB Connected]: ${conn.connection.host}`);
+    const conn = await mongoose.connect(env.MONGODB_URI, {
+      serverSelectionTimeoutMS: 5000
+    });
+    console.log(`[MongoDB Connected]: ${conn.connection.host} / DB: ${conn.connection.name}`);
   } catch (error) {
     console.error(`[MongoDB Connection Error]: ${error.message}`);
-    // Non-fatal fallback for graceful offline operation
   }
 };
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('[MongoDB Warning]: Database connection disconnected.');
+});
+
+mongoose.connection.on('reconnected', () => {
+  console.log('[MongoDB Info]: Database connection re-established.');
+});
 
 module.exports = connectDB;

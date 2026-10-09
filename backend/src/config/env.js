@@ -3,7 +3,7 @@ dotenv.config();
 
 module.exports = {
   PORT: process.env.PORT || 5000,
-  MONGODB_URI: process.env.MONGODB_URI || 'mongodb+srv://launchxpax_db_user:mjA9RhxRZlVQ65Ue@cluster0.1kiugyp.mongodb.net/gcek_career_ai?retryWrites=true&w=majority',
+  MONGODB_URI: process.env.MONGODB_URI || 'mongodb+srv://ami:amiya@cluster0.u5tif2l.mongodb.net/careerai?retryWrites=true&w=majority',
   GROQ_API_KEY: process.env.GROQ_API_KEY || '',
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
   SERP_API_KEY: process.env.SERP_API_KEY || '',
